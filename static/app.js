@@ -91,6 +91,9 @@ const api = {
   createTransaction: (input) => request("POST", "/api/transactions", input),
   updateTransaction: (id, input) => request("PUT", `/api/transactions/${id}`, input),
   deleteTransaction: (id) => request("DELETE", `/api/transactions/${id}`),
+  createCategory: (input) => request("POST", "/api/categories", input),
+  renameCategory: (id, name) => request("PUT", `/api/categories/${id}`, { name }),
+  deleteCategory: (id) => request("DELETE", `/api/categories/${id}`),
 };
 
 // ---------------------------------------------------------------------------
@@ -245,7 +248,7 @@ function renderCategoryField(form, { categories, onRetryCategories }) {
     return;
   }
 
-  const names = categories.data[type];
+  const names = categories.data[type].map((category) => category.name);
   const select = el("select", { name: "category" }, [
     el("option", { value: "", text: "분류 선택" }),
     ...names.map((name) => el("option", { value: name, text: name })),
@@ -333,6 +336,132 @@ function TransactionItem({ transaction, isEditing, isDeleting, onEdit, onDelete 
 }
 
 // ---------------------------------------------------------------------------
+// CategoryManager / CategoryItem (v0.4)
+// ---------------------------------------------------------------------------
+
+const MAX_CATEGORY_NAME_LENGTH = 20;
+
+/** 클라이언트 검사. 문구는 서버 message와 같게 맞춘다. 길이는 유니코드 문자 수로 센다. */
+function validateCategoryName(name) {
+  const trimmed = name.trim();
+  if (!trimmed) return "분류 이름을 입력해 주세요.";
+  if ([...trimmed].length > MAX_CATEGORY_NAME_LENGTH) return `분류 이름은 ${MAX_CATEGORY_NAME_LENGTH}자 이하여야 합니다.`;
+  return null;
+}
+
+/**
+ * 다시 그릴 때 입력 중인 값(추가할 이름·유형, 수정 중인 이름)을 유지한다.
+ * 추가 입력칸은 resetKey가 바뀔 때만 비운다.
+ */
+function renderCategoryManager(container, props) {
+  const sameKey = container.dataset.resetKey === String(props.resetKey);
+  const previousName = container.querySelector(".category-add input[name=name]");
+  const previousType = container.querySelector(".category-add input[name=categoryType]:checked");
+  const addName = sameKey && previousName ? previousName.value : "";
+  const addType = sameKey && previousType ? previousType.value : "expense";
+
+  const previousRename = container.querySelector(".rename-input");
+  const renameDraft =
+    previousRename && Number(previousRename.dataset.id) === props.renamingId ? previousRename.value : null;
+
+  let groups;
+  if (props.categories.status === "loading") {
+    groups = StatusMessage({ kind: "loading", message: "분류를 불러오는 중..." });
+  } else if (props.categories.status === "error") {
+    groups = StatusMessage({ kind: "error", message: props.categories.error.message, onRetry: props.onRetry });
+  } else {
+    groups = el(
+      "div",
+      { className: "category-groups" },
+      ["expense", "income"].map((type) =>
+        el("div", { className: "category-group" }, [
+          el("h3", { className: type, text: `${TYPE_LABELS[type]} 분류` }),
+          el(
+            "ul",
+            { className: "category-list" },
+            props.categories.data[type].map((category) =>
+              CategoryItem({
+                category,
+                isRenaming: category.id === props.renamingId,
+                renameDraft,
+                busy: props.busy,
+                onStartRename: props.onStartRename,
+                onRename: props.onRename,
+                onCancelRename: props.onCancelRename,
+                onDelete: props.onDelete,
+              }),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  const typeRadio = (type) =>
+    el("label", { className: "radio" }, [
+      el("input", { type: "radio", name: "categoryType", value: type, checked: addType === type, disabled: props.busy }),
+      ` ${TYPE_LABELS[type]}`,
+    ]);
+  const nameInput = el("input", { type: "text", name: "name", value: addName, disabled: props.busy, "aria-label": "새 분류 이름" });
+  const addForm = el("form", { className: "category-add", novalidate: true }, [
+    el("fieldset", { className: "field type-field" }, [el("legend", { text: "분류 추가" }), typeRadio("expense"), typeRadio("income")]),
+    el("div", { className: "category-add-row" }, [
+      nameInput,
+      el("button", { type: "submit", className: "button-primary", text: props.busy ? "추가 중..." : "추가", disabled: props.busy }),
+    ]),
+  ]);
+  addForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    props.onAdd({ type: addForm.querySelector("input[name=categoryType]:checked").value, name: nameInput.value });
+  });
+
+  container.dataset.resetKey = String(props.resetKey);
+  const errorBox = props.error ? el("p", { className: "form-error", role: "alert", text: props.error.message }) : null;
+  // replaceChildren은 null을 "null" 글자로 넣으므로 빈 항목을 걸러 낸다.
+  container.replaceChildren(...[el("h2", { text: "분류 관리" }), errorBox, groups, addForm].filter(Boolean));
+}
+
+function CategoryItem({ category, isRenaming, renameDraft, busy, onStartRename, onRename, onCancelRename, onDelete }) {
+  if (category.is_default) {
+    return el("li", { className: "category-item" }, [
+      el("span", { className: "category-name", text: category.name }),
+      el("span", { className: "badge", text: "기본" }),
+    ]);
+  }
+
+  if (isRenaming) {
+    const input = el("input", {
+      type: "text",
+      className: "rename-input",
+      value: renameDraft ?? category.name,
+      disabled: busy,
+      "aria-label": `'${category.name}' 새 이름`,
+    });
+    input.dataset.id = String(category.id);
+    const form = el("form", { className: "category-item is-renaming", novalidate: true }, [
+      input,
+      el("div", { className: "item-actions" }, [
+        el("button", { type: "submit", className: "button-primary", text: "저장", disabled: busy }),
+        el("button", { type: "button", className: "button-secondary", text: "취소", disabled: busy, onClick: onCancelRename }),
+      ]),
+    ]);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      onRename(category, input.value);
+    });
+    return el("li", {}, [form]);
+  }
+
+  return el("li", { className: "category-item" }, [
+    el("span", { className: "category-name", text: category.name }),
+    el("div", { className: "item-actions" }, [
+      el("button", { type: "button", className: "button-secondary", text: "수정", disabled: busy, onClick: () => onStartRename(category) }),
+      el("button", { type: "button", className: "button-danger", text: "삭제", disabled: busy, onClick: () => onDelete(category) }),
+    ]),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -340,6 +469,7 @@ const dom = {
   month: document.getElementById("month-selector"),
   summary: document.getElementById("summary-panel"),
   form: document.getElementById("transaction-form"),
+  categories: document.getElementById("category-manager"),
   list: document.getElementById("transaction-list"),
 };
 
@@ -353,6 +483,10 @@ const state = {
   formError: null,
   deletingId: null,
   formResetKey: 0,
+  categoryBusy: false,
+  categoryError: null,
+  renamingCategoryId: null,
+  categoryResetKey: 0,
 };
 
 // 응답이 늦게 도착해 최신 상태를 덮어쓰지 않도록 요청마다 번호를 붙인다.
@@ -376,6 +510,22 @@ function renderForm() {
     onSubmit: handleSubmit,
     onCancelEdit: handleCancelEdit,
     onRetryCategories: loadCategories,
+  });
+}
+
+function renderCategories() {
+  renderCategoryManager(dom.categories, {
+    categories: state.categories,
+    busy: state.categoryBusy,
+    error: state.categoryError,
+    renamingId: state.renamingCategoryId,
+    resetKey: state.categoryResetKey,
+    onAdd: handleAddCategory,
+    onStartRename: handleStartRenameCategory,
+    onRename: handleRenameCategory,
+    onCancelRename: handleCancelRenameCategory,
+    onDelete: handleDeleteCategory,
+    onRetry: loadCategories,
   });
 }
 
@@ -407,7 +557,10 @@ async function load(name, fetcher, render) {
 }
 
 function loadCategories() {
-  return load("categories", api.getCategories, renderForm);
+  return load("categories", api.getCategories, () => {
+    renderForm();
+    renderCategories();
+  });
 }
 
 function loadTransactions() {
@@ -506,7 +659,78 @@ async function handleDelete(transaction) {
   }
 }
 
+// --- 분류 관리 (v0.4) ---
+
+async function runCategoryAction(action) {
+  if (state.categoryBusy) return;
+  state.categoryBusy = true;
+  state.categoryError = null;
+  renderCategories();
+  try {
+    await action();
+  } catch (error) {
+    state.categoryError = error;
+    if (error.code === "CATEGORY_NOT_FOUND") {
+      state.renamingCategoryId = null;
+      loadCategories();
+    }
+  } finally {
+    state.categoryBusy = false;
+    renderCategories();
+  }
+}
+
+function showCategoryError(message) {
+  state.categoryError = { code: "CLIENT_VALIDATION", message };
+  renderCategories();
+}
+
+function handleAddCategory({ type, name }) {
+  const message = validateCategoryName(name);
+  if (message) return showCategoryError(message);
+  return runCategoryAction(async () => {
+    await api.createCategory({ type, name: name.trim() });
+    state.categoryResetKey += 1;
+    loadCategories();
+  });
+}
+
+function handleStartRenameCategory(category) {
+  state.renamingCategoryId = category.id;
+  state.categoryError = null;
+  renderCategories();
+}
+
+function handleCancelRenameCategory() {
+  state.renamingCategoryId = null;
+  state.categoryError = null;
+  renderCategories();
+}
+
+function handleRenameCategory(category, name) {
+  const message = validateCategoryName(name);
+  if (message) return showCategoryError(message);
+  return runCategoryAction(async () => {
+    await api.renameCategory(category.id, name.trim());
+    state.renamingCategoryId = null;
+    // 이름을 바꾸면 그 분류를 쓰던 거래의 분류 이름도 바뀌므로 거래 목록도 다시 불러온다.
+    loadCategories();
+    loadTransactions();
+  });
+}
+
+function handleDeleteCategory(category) {
+  if (state.categoryBusy) return;
+  if (!window.confirm(`'${category.name}'(${TYPE_LABELS[category.type]}) 분류를 삭제할까요?`)) return;
+  return runCategoryAction(async () => {
+    await api.deleteCategory(category.id);
+    if (state.renamingCategoryId === category.id) state.renamingCategoryId = null;
+    loadCategories();
+  });
+}
+
 renderMonth();
 renderForm();
+renderCategories();
 loadCategories();
 loadMonth();

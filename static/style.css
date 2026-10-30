@@ -217,6 +217,84 @@ button:disabled {
   gap: 8px;
 }
 
+/* 분류 관리 (v0.4) */
+h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.category-groups {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.category-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.category-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+.category-list > li:first-child .category-item,
+.category-list > li.category-item:first-child {
+  border-top: 0;
+}
+
+.category-name {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.category-item .item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.category-item button {
+  padding: 4px 10px;
+}
+
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.badge {
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+}
+
+.category-add .field {
+  margin: 0 0 8px;
+  border: 0;
+  padding: 0;
+}
+
+.category-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.category-add-row input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* 상태 문구 */
 .status {
   color: var(--muted);
@@ -231,7 +309,8 @@ button:disabled {
 }
 
 @media (max-width: 480px) {
-  .summary {
+  .summary,
+  .category-groups {
     grid-template-columns: 1fr;
   }
 }
