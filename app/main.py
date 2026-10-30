@@ -334,6 +334,25 @@ def delete_transaction(transaction_id: int = PathParam(ge=1, le=MAX_ID)):
     return Response(status_code=204)
 
 
+@app.get("/api/backup")
+def download_backup():
+    filename = datetime.now().strftime("budget-backup-%Y-%m-%d-%H%M.db")
+    with open_db("백업 파일을 만들지 못했습니다.") as conn:
+        # SQLite 백업 기능은 서버가 쓰는 중에도 깨지지 않은 복사본을 만든다.
+        # 메모리 DB에 받아 바이트로 꺼내므로 서버 디스크에 임시 파일을 남기지 않는다.
+        backup = sqlite3.connect(":memory:")
+        try:
+            conn.backup(backup)
+            content = backup.serialize()
+        finally:
+            backup.close()
+    return Response(
+        content=content,
+        media_type="application/vnd.sqlite3",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(STATIC_DIR / "index.html")

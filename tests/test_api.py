@@ -955,3 +955,90 @@ def test_api_cdel_e06_db_error(client, db_path):
         mp.setattr(sqlite3, "connect", fail)
         assert_error(delete_category(client, snack_category["id"]), 500, "DATABASE_ERROR")
     assert get_category_row(db_path, snack_category["id"]) is not None
+
+
+# ---------------------------------------------------------------------------
+# 1.11 GET /api/backup (v0.5)
+# ---------------------------------------------------------------------------
+
+BACKUP_FILENAME = re.compile(r'attachment; filename="budget-backup-(\d{4}-\d{2}-\d{2}-\d{4})\.db"')
+
+
+def download_backup(client, tmp_path):
+    """백업을 받아 파일로 저장하고 (응답, 파일 경로)를 돌려준다."""
+    res = client.get("/api/backup")
+    assert res.status_code == 200, res.text
+    path = tmp_path / "downloaded-backup.db"
+    path.write_bytes(res.content)
+    return res, path
+
+
+def table_rows(path, table):
+    conn = REAL_CONNECT(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY id")]
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def filled(client):
+    for t in (T1, T2, T3, T4, T5):
+        create(client, t)
+    add_category(client, "expense", "간식")
+
+
+def test_api_bak_n01_download_response(client, tmp_path):
+    before = datetime.now().replace(second=0, microsecond=0)
+    res, _ = download_backup(client, tmp_path)
+    after = datetime.now()
+    assert res.headers["content-type"].startswith("application/vnd.sqlite3")
+    match = BACKUP_FILENAME.fullmatch(res.headers["content-disposition"])
+    assert match, res.headers["content-disposition"]
+    stamp = datetime.strptime(match.group(1), "%Y-%m-%d-%H%M")
+    assert before <= stamp <= after
+
+
+def test_api_bak_n02_content_matches(client, db_path, tmp_path, filled):
+    _, path = download_backup(client, tmp_path)
+    assert path.read_bytes().startswith(b"SQLite format 3\x00")
+    for table in ("transactions", "categories"):
+        assert table_rows(path, table) == table_rows(db_path, table)
+    assert len(table_rows(path, "transactions")) == 5
+    assert len(table_rows(path, "categories")) == 11
+
+
+def test_api_bak_n03_restorable(client, tmp_path, monkeypatch, filled):
+    original_list = list_month(client, 2026, 10)
+    original_summary = get_summary(client, 2026, 10)
+    original_categories = get_categories(client)
+    _, path = download_backup(client, tmp_path)
+
+    monkeypatch.setenv("BUDGET_DB_PATH", str(path))
+    with TestClient(fresh_app(), raise_server_exceptions=False) as restored:
+        assert list_month(restored, 2026, 10) == original_list
+        assert get_summary(restored, 2026, 10) == original_summary
+        assert get_categories(restored) == original_categories
+
+
+def test_api_bak_n04_original_unchanged(client, db_path, tmp_path, filled):
+    before = {table: table_rows(db_path, table) for table in ("transactions", "categories")}
+    download_backup(client, tmp_path)
+    assert {table: table_rows(db_path, table) for table in ("transactions", "categories")} == before
+    create(client, with_fields(date="2026-10-02"))
+    assert count_rows(db_path) == 6
+
+
+def test_api_bak_n05_empty_db(client, tmp_path):
+    _, path = download_backup(client, tmp_path)
+    assert table_rows(path, "transactions") == []
+    assert len(table_rows(path, "categories")) == 10
+
+
+def test_api_bak_e01_db_error(client, broken_db):
+    assert_error(client.get("/api/backup"), 500, "DATABASE_ERROR")
+
+
+def test_api_bak_e02_method_not_allowed(client):
+    assert_error(client.post("/api/backup"), 405, "METHOD_NOT_ALLOWED")
