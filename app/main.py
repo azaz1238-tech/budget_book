@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Query, Request
 from fastapi import Path as PathParam
@@ -129,11 +130,14 @@ def classify_validation_errors(errors, url_path):
 
     query_errors = [e for e in errors if e["loc"][0] == "query"]
     if query_errors:
+        names = {e["loc"][-1] for e in query_errors}
         if any(e["type"] == "missing" for e in query_errors):
             return 422, "INVALID_QUERY", "조회할 연도와 월을 입력해 주세요."
-        if any(e["loc"][-1] == "month" for e in query_errors):
+        if "month" in names:
             return 422, "INVALID_QUERY", "월은 1부터 12 사이여야 합니다."
-        return 422, "INVALID_QUERY", "연도는 1부터 9999 사이여야 합니다."
+        if "year" in names:
+            return 422, "INVALID_QUERY", "연도는 1부터 9999 사이여야 합니다."
+        return 422, "INVALID_QUERY", "분류 필터의 유형이 올바르지 않습니다."
 
     # 본문이 깨진 JSON이거나 JSON 객체가 아닌 경우
     if any(e["type"] == "json_invalid" or tuple(e["loc"]) == ("body",) for e in errors):
@@ -179,6 +183,21 @@ MAX_ID = 2**63 - 1
 def month_bounds(year, month):
     last_day = calendar.monthrange(year, month)[1]
     return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}"
+
+
+def month_conditions(year, month, type_, category):
+    """월 범위 조건에, 분류 필터(유형+분류 이름)가 있으면 그 조건을 더한다."""
+    first_day, last_day = month_bounds(year, month)
+    where, params = "date BETWEEN ? AND ?", [first_day, last_day]
+    if type_ is None and category is None:
+        return where, params
+    # 같은 이름이 지출·수입에 모두 있을 수 있어 유형과 분류 이름을 함께 받아야 분류가 정해진다.
+    if type_ is None or not category:
+        raise ApiError(422, "INVALID_QUERY", "분류 필터는 유형과 분류를 함께 지정해야 합니다.")
+    return where + " AND type = ? AND category = ?", params + [type_, category]
+
+
+FilterType = Literal["income", "expense"] | None
 
 
 CATEGORY_COLUMNS = "id, type, name, is_default"
@@ -265,28 +284,37 @@ def delete_category(category_id: int = PathParam(ge=1, le=MAX_ID)):
 
 
 @app.get("/api/transactions")
-def list_transactions(year: int = Query(ge=1, le=9999), month: int = Query(ge=1, le=12)):
-    first_day, last_day = month_bounds(year, month)
+def list_transactions(
+    year: int = Query(ge=1, le=9999),
+    month: int = Query(ge=1, le=12),
+    type_: FilterType = Query(None, alias="type"),
+    category: str | None = Query(None),
+):
+    where, params = month_conditions(year, month, type_, category)
     with open_db("거래 내역을 불러오지 못했습니다.") as conn:
         rows = conn.execute(
-            f"SELECT {TRANSACTION_COLUMNS} FROM transactions "
-            "WHERE date BETWEEN ? AND ? "
+            f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE {where} "
             "ORDER BY date DESC, created_at DESC, id DESC",
-            (first_day, last_day),
+            params,
         ).fetchall()
     return [dict(row) for row in rows]
 
 
 @app.get("/api/summary")
-def get_summary(year: int = Query(ge=1, le=9999), month: int = Query(ge=1, le=12)):
-    first_day, last_day = month_bounds(year, month)
+def get_summary(
+    year: int = Query(ge=1, le=9999),
+    month: int = Query(ge=1, le=12),
+    type_: FilterType = Query(None, alias="type"),
+    category: str | None = Query(None),
+):
+    where, params = month_conditions(year, month, type_, category)
     with open_db("월별 요약을 불러오지 못했습니다.") as conn:
         income, expense = conn.execute(
             "SELECT "
             "COALESCE(SUM(CASE WHEN type = 'income' THEN amount END), 0), "
             "COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) "
-            "FROM transactions WHERE date BETWEEN ? AND ?",
-            (first_day, last_day),
+            f"FROM transactions WHERE {where}",
+            params,
         ).fetchone()
     return {"year": year, "month": month, "income": income, "expense": expense, "balance": income - expense}
 

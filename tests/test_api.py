@@ -1042,3 +1042,72 @@ def test_api_bak_e01_db_error(client, broken_db):
 
 def test_api_bak_e02_method_not_allowed(client):
     assert_error(client.post("/api/backup"), 405, "METHOD_NOT_ALLOWED")
+
+
+# ---------------------------------------------------------------------------
+# 1.12 분류 필터 쿼리 (v0.6)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def filter_data(client, five):
+    food = create(client, with_fields(date="2026-10-15", amount=8000, memo=None))
+    etc_expense = create(client, with_fields(date="2026-10-20", amount=3000, category="기타", memo=None))
+    etc_income = create(client, {**T2, "date": "2026-10-21", "amount": 5000, "category": "기타"})
+    return {"t1": five[0], "food": food, "etc_expense": etc_expense, "etc_income": etc_income}
+
+
+def filtered_list(client, year, month, type_, category):
+    params = {"year": year, "month": month, "type": type_, "category": category}
+    return assert_json(client.get("/api/transactions", params=params), 200)
+
+
+def filtered_summary(client, year, month, type_, category):
+    params = {"year": year, "month": month, "type": type_, "category": category}
+    return assert_json(client.get("/api/summary", params=params), 200)
+
+
+def test_api_flt_n01_list_filter(client, filter_data):
+    rows = filtered_list(client, 2026, 10, "expense", "식비")
+    assert [t["id"] for t in rows] == [filter_data["t1"]["id"], filter_data["food"]["id"]]
+
+
+def test_api_flt_n02_same_name_other_type(client, filter_data):
+    assert [t["id"] for t in filtered_list(client, 2026, 10, "expense", "기타")] == [filter_data["etc_expense"]["id"]]
+    assert [t["id"] for t in filtered_list(client, 2026, 10, "income", "기타")] == [filter_data["etc_income"]["id"]]
+
+
+def test_api_flt_n03_other_month_excluded(client, filter_data):
+    assert filtered_list(client, 2026, 9, "expense", "식비") == []
+
+
+def test_api_flt_n04_unknown_category(client, filter_data):
+    assert filtered_list(client, 2026, 10, "expense", "없는분류") == []
+
+
+def test_api_flt_n05_summary_expense_filter(client, filter_data):
+    assert filtered_summary(client, 2026, 10, "expense", "식비") == {
+        "year": 2026, "month": 10, "income": 0, "expense": 20500, "balance": -20500,
+    }
+
+
+def test_api_flt_n06_summary_income_filter(client, filter_data):
+    assert filtered_summary(client, 2026, 10, "income", "월급") == {
+        "year": 2026, "month": 10, "income": 3000000, "expense": 0, "balance": 3000000,
+    }
+
+
+def test_api_flt_n07_unfiltered_summary_unchanged(client, filter_data):
+    assert get_summary(client, 2026, 10) == {
+        "year": 2026, "month": 10, "income": 3005000, "expense": 73500, "balance": 2931500,
+    }
+
+
+@pytest.mark.parametrize("path", ["/api/transactions", "/api/summary"])
+@pytest.mark.parametrize("extra", [
+    pytest.param({"type": "expense"}, id="type-only"),
+    pytest.param({"category": "식비"}, id="category-only"),
+    pytest.param({"type": "expense", "category": ""}, id="empty-category"),
+    pytest.param({"type": "transfer", "category": "식비"}, id="bad-type"),
+])
+def test_api_flt_e01_e02_invalid_filter(client, path, extra):
+    assert_error(client.get(path, params={"year": 2026, "month": 10, **extra}), 422, "INVALID_QUERY")
