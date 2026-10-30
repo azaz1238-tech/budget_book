@@ -123,10 +123,20 @@ function saveBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** 월 조회 쿼리. 분류 필터(v0.6)가 있으면 유형과 분류 이름을 함께 붙인다. */
+function monthQuery({ year, month }, filter) {
+  const params = new URLSearchParams({ year, month });
+  if (filter) {
+    params.set("type", filter.type);
+    params.set("category", filter.category);
+  }
+  return params.toString();
+}
+
 const api = {
   getCategories: () => request("GET", "/api/categories"),
-  listTransactions: ({ year, month }) => request("GET", `/api/transactions?year=${year}&month=${month}`),
-  getSummary: ({ year, month }) => request("GET", `/api/summary?year=${year}&month=${month}`),
+  listTransactions: (selected, filter) => request("GET", `/api/transactions?${monthQuery(selected, filter)}`),
+  getSummary: (selected, filter) => request("GET", `/api/summary?${monthQuery(selected, filter)}`),
   createTransaction: (input) => request("POST", "/api/transactions", input),
   updateTransaction: (id, input) => request("PUT", `/api/transactions/${id}`, input),
   deleteTransaction: (id) => request("DELETE", `/api/transactions/${id}`),
@@ -342,14 +352,63 @@ function validateTransactionInput(input) {
 // TransactionList / TransactionItem
 // ---------------------------------------------------------------------------
 
-function renderTransactionList(container, { transactions, selected, editingId, deletingId, onEdit, onDelete, onRetry }) {
+function filterLabel(filter) {
+  return `'${filter.category}'(${TYPE_LABELS[filter.type]})`;
+}
+
+/** 분류 필터 선택 상자 (v0.6). 값은 "유형:분류 이름" 형식이다. */
+function FilterSelect({ categories, filter, onFilterChange }) {
+  const select = el("select", { className: "filter-select", "aria-label": "분류 필터" }, [
+    el("option", { value: "", text: "전체 분류" }),
+  ]);
+  if (categories.status === "success") {
+    for (const type of ["expense", "income"]) {
+      select.append(
+        el("optgroup", { label: TYPE_LABELS[type] }, categories.data[type].map((c) => el("option", { value: `${type}:${c.name}`, text: c.name }))),
+      );
+    }
+  }
+  const current = filter ? `${filter.type}:${filter.category}` : "";
+  if (current && ![...select.options].some((option) => option.value === current)) {
+    // 분류 목록을 불러오는 중이어도 선택한 필터가 보이게 한다.
+    select.append(el("option", { value: current, text: filter.category }));
+  }
+  select.value = current;
+  select.addEventListener("change", () => {
+    if (!select.value) return onFilterChange(null);
+    const split = select.value.indexOf(":");
+    onFilterChange({ type: select.value.slice(0, split), category: select.value.slice(split + 1) });
+  });
+  return el("label", { className: "list-filter" }, [el("span", { text: "분류 필터" }), select]);
+}
+
+/** 필터 적용 시 건수·합계 한 줄 (v0.6). */
+function FilterTotal({ filter, transactions, filterSummary }) {
+  if (!filter) return null;
+  const label = `${filter.category}(${TYPE_LABELS[filter.type]})`;
+  if (filterSummary && filterSummary.status === "error") {
+    return el("p", { className: "filter-total is-error", text: filterSummary.error.message });
+  }
+  if (transactions.status !== "success" || !filterSummary || filterSummary.status !== "success") {
+    return el("p", { className: `filter-total ${filter.type}`, text: `${label} · 합계 계산 중...` });
+  }
+  const total = filterSummary.data[filter.type];
+  return el("p", {
+    className: `filter-total ${filter.type}`,
+    text: `${label} · ${transactions.data.length}건 · 합계 ${formatWon(total)}`,
+  });
+}
+
+function renderTransactionList(container, props) {
+  const { transactions, selected, editingId, deletingId, onEdit, onDelete, onRetry, filter } = props;
   let body;
   if (transactions.status === "loading") {
     body = StatusMessage({ kind: "loading", message: "거래 내역을 불러오는 중..." });
   } else if (transactions.status === "error") {
     body = StatusMessage({ kind: "error", message: transactions.error.message, onRetry });
   } else if (transactions.data.length === 0) {
-    body = StatusMessage({ kind: "empty", message: `${selected.year}년 ${selected.month}월에는 거래 내역이 없습니다.` });
+    const what = filter ? `${filterLabel(filter)} 거래가` : "거래 내역이";
+    body = StatusMessage({ kind: "empty", message: `${selected.year}년 ${selected.month}월에는 ${what} 없습니다.` });
   } else {
     body = el(
       "ul",
@@ -365,7 +424,14 @@ function renderTransactionList(container, { transactions, selected, editingId, d
       ),
     );
   }
-  container.replaceChildren(el("h2", { text: "거래 내역" }), body);
+  container.replaceChildren(
+    ...[
+      el("h2", { text: "거래 내역" }),
+      FilterSelect(props),
+      FilterTotal(props),
+      body,
+    ].filter(Boolean),
+  );
 }
 
 function TransactionItem({ transaction, isEditing, isDeleting, onEdit, onDelete }) {
@@ -545,10 +611,12 @@ const state = {
   renamingCategoryId: null,
   categoryResetKey: 0,
   backingUp: false,
+  filter: null,
+  filterSummary: null,
 };
 
 // 응답이 늦게 도착해 최신 상태를 덮어쓰지 않도록 요청마다 번호를 붙인다.
-const latestRequest = { categories: 0, transactions: 0, summary: 0 };
+const latestRequest = { categories: 0, transactions: 0, summary: 0, filterSummary: 0 };
 
 function renderBackup() {
   renderBackupButton(dom.backup, { busy: state.backingUp, onBackup: handleBackup });
@@ -599,7 +667,14 @@ function renderList() {
     deletingId: state.deletingId,
     onEdit: handleEdit,
     onDelete: handleDelete,
-    onRetry: loadTransactions,
+    onRetry: () => {
+      loadTransactions();
+      loadFilterSummary();
+    },
+    categories: state.categories,
+    filter: state.filter,
+    filterSummary: state.filterSummary,
+    onFilterChange: handleFilterChange,
   });
 }
 
@@ -618,16 +693,23 @@ async function load(name, fetcher, render) {
   render();
 }
 
-function loadCategories() {
-  return load("categories", api.getCategories, () => {
+async function loadCategories() {
+  await load("categories", api.getCategories, () => {
     renderForm();
     renderCategories();
+    renderList();
   });
+  // 필터로 고른 분류가 삭제되었으면 필터를 전체로 되돌린다.
+  const { filter, categories } = state;
+  if (filter && categories.status === "success" && !categories.data[filter.type].some((c) => c.name === filter.category)) {
+    handleFilterChange(null);
+  }
 }
 
 function loadTransactions() {
   const selected = { ...state.selected };
-  return load("transactions", () => api.listTransactions(selected), renderList);
+  const filter = state.filter && { ...state.filter };
+  return load("transactions", () => api.listTransactions(selected, filter), renderList);
 }
 
 function loadSummary() {
@@ -635,8 +717,27 @@ function loadSummary() {
   return load("summary", () => api.getSummary(selected), renderSummary);
 }
 
+/** 필터가 있을 때만 그 분류의 합계를 불러온다. 월별 요약(loadSummary)은 항상 전체 기준이다. */
+function loadFilterSummary() {
+  if (!state.filter) {
+    latestRequest.filterSummary += 1; // 진행 중인 이전 응답이 덮어쓰지 않게 한다
+    state.filterSummary = null;
+    renderList();
+    return Promise.resolve();
+  }
+  const selected = { ...state.selected };
+  const filter = { ...state.filter };
+  return load("filterSummary", () => api.getSummary(selected, filter), renderList);
+}
+
 function loadMonth() {
-  return Promise.all([loadTransactions(), loadSummary()]);
+  return Promise.all([loadTransactions(), loadSummary(), loadFilterSummary()]);
+}
+
+function handleFilterChange(filter) {
+  state.filter = filter;
+  loadTransactions();
+  loadFilterSummary();
 }
 
 function resetForm() {
@@ -773,11 +874,17 @@ function handleRenameCategory(category, name) {
   const message = validateCategoryName(name);
   if (message) return showCategoryError(message);
   return runCategoryAction(async () => {
-    await api.renameCategory(category.id, name.trim());
+    const newName = name.trim();
+    await api.renameCategory(category.id, newName);
     state.renamingCategoryId = null;
+    // 필터로 고른 분류의 이름이 바뀌면 필터도 새 이름을 따른다.
+    if (state.filter && state.filter.type === category.type && state.filter.category === category.name) {
+      state.filter = { type: category.type, category: newName };
+    }
     // 이름을 바꾸면 그 분류를 쓰던 거래의 분류 이름도 바뀌므로 거래 목록도 다시 불러온다.
     loadCategories();
     loadTransactions();
+    loadFilterSummary();
   });
 }
 

@@ -1,32 +1,79 @@
+/* ==========================================================================
+   가계부 스타일
+   - 색·간격·모서리는 :root 변수로 통일한다.
+   - 수입은 파란색, 지출은 빨간색 (SPEC 5절)
+   ========================================================================== */
+
 :root {
-  --bg: #f5f6f8;
+  --bg: #f4f6fa;
   --card: #ffffff;
-  --text: #1f2328;
-  --muted: #656d76;
-  --border: #d0d7de;
-  --income: #1f6feb;
-  --expense: #cf222e;
-  --primary: #1f6feb;
-  --highlight: #fff8c5;
-  --radius: 8px;
+  --surface: #f7f9fc;
+  --text: #1d2433;
+  --muted: #6b7385;
+  --border: #e4e8f0;
+  --border-strong: #cfd6e3;
+
+  --primary: #2f6fed;
+  --primary-hover: #2459cc;
+  --focus-ring: 0 0 0 3px rgba(47, 111, 237, 0.22);
+
+  --income: #2563eb;
+  --income-soft: #eaf1ff;
+  --expense: #dc2626;
+  --expense-soft: #fdeeee;
+  --highlight: #fff6d6;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 2px 8px rgba(16, 24, 40, 0.05);
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* button 등에 display를 지정해도 hidden 속성이 항상 우선하게 한다. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 15px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 .app {
-  max-width: 720px;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 24px 16px 48px;
+}
+
+/* --------------------------------------------------------------------------
+   제목·헤더
+   -------------------------------------------------------------------------- */
+
+h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .app-header {
@@ -34,13 +81,8 @@ body {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 1.5rem;
+  gap: 12px;
+  margin-bottom: 20px;
 }
 
 .title-row {
@@ -50,23 +92,27 @@ h1 {
   gap: 12px;
 }
 
-.backup-button {
-  padding: 6px 12px;
-  font-size: 0.9rem;
+.app-header input[type="month"] {
+  width: auto;
+  min-width: 160px;
 }
 
-h2 {
-  margin: 0 0 12px;
-  font-size: 1.1rem;
-}
+/* --------------------------------------------------------------------------
+   카드
+   -------------------------------------------------------------------------- */
 
 .card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  box-shadow: var(--shadow);
+  padding: 20px;
   margin-bottom: 16px;
 }
+
+/* --------------------------------------------------------------------------
+   입력 요소
+   -------------------------------------------------------------------------- */
 
 input,
 select,
@@ -80,22 +126,64 @@ input[type="number"],
 input[type="text"],
 select {
   width: 100%;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   background: #fff;
+  color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
+}
+
+input:disabled,
+select:disabled {
+  background: var(--surface);
+  color: var(--muted);
+}
+
+input[type="radio"] {
+  accent-color: var(--primary);
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   버튼
+   -------------------------------------------------------------------------- */
+
 button {
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: #f6f8fa;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
@@ -105,29 +193,29 @@ button:disabled {
   color: #fff;
 }
 
+.button-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
 .button-danger {
   color: var(--expense);
 }
 
-/* 월별 요약 */
-.summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin: 0;
+.button-danger:hover:not(:disabled) {
+  background: var(--expense-soft);
+  border-color: #f5c2c2;
 }
 
-.summary dt {
-  color: var(--muted);
-  font-size: 0.9rem;
+.backup-button {
+  height: 34px;
+  padding: 0 12px;
+  font-size: 0.85rem;
 }
 
-.summary dd {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 600;
-  word-break: break-all;
-}
+/* --------------------------------------------------------------------------
+   수입·지출 색
+   -------------------------------------------------------------------------- */
 
 .income {
   color: var(--income);
@@ -137,38 +225,117 @@ button:disabled {
   color: var(--expense);
 }
 
-/* 입력 폼 */
-.transaction-form .field {
-  display: block;
-  margin: 0 0 12px;
-  border: 0;
-  padding: 0;
+/* --------------------------------------------------------------------------
+   월별 요약
+   -------------------------------------------------------------------------- */
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
 }
 
-.transaction-form label {
+.summary > div {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.summary > div:nth-child(1) {
+  background: var(--income-soft);
+}
+
+.summary > div:nth-child(2) {
+  background: var(--expense-soft);
+}
+
+.summary dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.summary dd {
+  margin: 2px 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------------------------
+   거래 입력 폼 (넓은 화면에서 2열)
+   -------------------------------------------------------------------------- */
+
+.transaction-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.transaction-form > h2,
+.transaction-form > .form-error,
+.transaction-form > .type-field,
+.transaction-form > .form-actions {
+  grid-column: 1 / -1;
+}
+
+.transaction-form > h2 {
+  margin-bottom: 0;
+}
+
+.field {
   display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  margin-top: 6px;
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
+.category-field label {
+  display: block;
+}
+
+.category-field .status {
+  margin-top: 6px;
 }
 
 .type-field legend {
   padding: 0;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .type-field .radio {
-  display: inline-block;
-  margin-right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 18px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
 }
 
 .form-error {
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: #ffebe9;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #f5c2c2;
+  border-radius: var(--radius-sm);
+  background: var(--expense-soft);
   color: var(--expense);
-}
-
-.form-error[hidden] {
-  display: none;
+  font-size: 0.9rem;
+  font-weight: 500;
 }
 
 .form-actions {
@@ -176,7 +343,50 @@ button:disabled {
   gap: 8px;
 }
 
-/* 거래 목록 */
+/* --------------------------------------------------------------------------
+   거래 목록
+   -------------------------------------------------------------------------- */
+
+.list-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.list-filter .filter-select {
+  flex: 1;
+  max-width: 280px;
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
+.filter-total {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.filter-total.expense {
+  background: var(--expense-soft);
+}
+
+.filter-total.income {
+  background: var(--income-soft);
+}
+
+.filter-total.is-error {
+  background: var(--expense-soft);
+  color: var(--expense);
+  font-weight: 500;
+}
+
 .transaction-list {
   list-style: none;
   margin: 0;
@@ -185,10 +395,10 @@ button:disabled {
 
 .transaction-item {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
   align-items: center;
-  padding: 10px 0;
+  padding: 12px 4px;
   border-top: 1px solid var(--border);
 }
 
@@ -197,27 +407,56 @@ button:disabled {
 }
 
 .transaction-item.is-editing {
+  margin: 0 -8px;
+  padding: 12px;
+  border-radius: 10px;
   background: var(--highlight);
 }
 
 .item-main {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px 10px;
   min-width: 0;
 }
 
 .item-date {
   color: var(--muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.item-type {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.item-type.income {
+  background: var(--income-soft);
+}
+
+.item-type.expense {
+  background: var(--expense-soft);
+}
+
+.item-category {
+  font-weight: 600;
+  word-break: break-all;
 }
 
 .item-memo {
   color: var(--muted);
+  font-size: 0.9rem;
   word-break: break-all;
 }
 
 .item-amount {
-  font-weight: 600;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
 }
@@ -226,20 +465,28 @@ button:disabled {
   grid-column: 1 / -1;
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
-/* 분류 관리 (v0.4) */
-h3 {
-  margin: 0 0 8px;
-  font-size: 1rem;
+.item-actions button,
+.category-item button {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 0.85rem;
+}
+
+/* --------------------------------------------------------------------------
+   분류 관리 (v0.4)
+   -------------------------------------------------------------------------- */
+
+#category-manager > .form-error {
+  margin-bottom: 14px;
 }
 
 .category-groups {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 16px;
-  margin-bottom: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
 }
 
 .category-list {
@@ -253,6 +500,7 @@ h3 {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 8px;
+  min-height: 44px;
   padding: 6px 0;
   border-top: 1px solid var(--border);
 }
@@ -269,12 +517,7 @@ h3 {
 }
 
 .category-item .item-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.category-item button {
-  padding: 4px 10px;
+  grid-column: auto;
 }
 
 .rename-input {
@@ -283,18 +526,28 @@ h3 {
   width: auto;
 }
 
+.category-item input.rename-input {
+  height: 32px;
+}
+
 .badge {
-  font-size: 0.8rem;
-  color: var(--muted);
-  border: 1px solid var(--border);
+  padding: 1px 8px;
   border-radius: 999px;
-  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.category-add {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .category-add .field {
-  margin: 0 0 8px;
-  border: 0;
-  padding: 0;
+  margin-bottom: 10px;
 }
 
 .category-add-row {
@@ -307,8 +560,12 @@ h3 {
   min-width: 0;
 }
 
-/* 상태 문구 */
+/* --------------------------------------------------------------------------
+   상태 문구 (로딩·빈 목록·에러)
+   -------------------------------------------------------------------------- */
+
 .status {
+  padding: 8px 0;
   color: var(--muted);
 }
 
@@ -316,13 +573,55 @@ h3 {
   margin: 0 0 8px;
 }
 
+.status p:last-child {
+  margin-bottom: 0;
+}
+
 .status-error {
   color: var(--expense);
 }
 
-@media (max-width: 480px) {
-  .summary,
+.status button {
+  height: 32px;
+  font-size: 0.85rem;
+}
+
+/* --------------------------------------------------------------------------
+   좁은 화면
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 560px) {
+  .app {
+    padding-top: 16px;
+  }
+
+  .card {
+    padding: 16px;
+  }
+
+  .transaction-form,
   .category-groups {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-header input[type="month"] {
+    min-width: 0;
+  }
+
+  .list-filter .filter-select {
+    max-width: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .summary > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
   }
 }
