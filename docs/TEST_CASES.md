@@ -1,7 +1,7 @@
 # 테스트 케이스 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`, `docs/DATA_MODEL.md`, `docs/API_SPEC.md`, `docs/COMPONENT_SPEC.md`
-> 대상 범위: MVP(v0.1 ~ v0.3)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(1.8 ~ 1.10절, 2.8절)
 
 ## 0. 공통 사항
 
@@ -18,6 +18,7 @@
 | 컴포넌트 | 서버를 실행한 뒤 브라우저에서 직접 확인한다. (현재 스택에 JavaScript 테스트 도구가 없음) |
 
 - **DB 오류 상황**: 테스트에서 DB 연결 함수가 `sqlite3.OperationalError`를 일으키도록 바꿔서 만든다.
+- **트랜잭션 중간 실패 상황** (v0.4): 테스트 DB에 `transactions` 수정 시 오류를 내는 트리거를 만들어, 분류 이름 수정 중 두 번째 `UPDATE`가 실패하게 한다.
 - **서버 연결 실패 상황**: 화면을 연 뒤 서버를 종료해서 만든다.
 - **정해진 시각**: 별도 표기가 없으면 "오늘"은 `2026-10-30`, 선택한 월은 `2026년 10월`로 가정한다.
 
@@ -42,7 +43,7 @@
 | ID | 대상 | 상황 | 기대 결과 |
 |---|---|---|---|
 | API-COM-N01 | `GET /` | 화면 주소 요청 | 200, `index.html` 반환 |
-| API-COM-N02 | DB 초기화 | DB 파일이 없는 상태로 앱 시작 | `transactions` 테이블과 `idx_transactions_date` 인덱스가 자동 생성됨 |
+| API-COM-N02 | DB 초기화 | DB 파일이 없는 상태로 앱 시작 | `transactions`·`categories` 테이블과 `idx_transactions_date` 인덱스가 자동 생성되고, `categories`에 기본 분류 10개가 들어감 |
 | API-COM-N03 | 데이터 유지 | T1 등록 후, 같은 DB 파일로 앱을 새로 만들어 목록 조회 | T1이 그대로 조회됨 (서버 재실행 후에도 유지) |
 | API-COM-N04 | 응답 형식 | 본문이 있는 모든 성공 응답 | `Content-Type`이 `application/json` |
 | API-COM-E01 | 없는 경로 | `GET /api/unknown` | 404, `NOT_FOUND` |
@@ -54,9 +55,13 @@
 
 | ID | 대상 | 상황 | 기대 결과 |
 |---|---|---|---|
-| API-CAT-N01 | 분류 목록 | 요청 | 200, `expense`가 `["식비","교통","주거","쇼핑","의료","문화·여가","기타"]`, `income`이 `["월급","용돈","기타"]` (순서 포함 일치) |
-| API-CAT-N02 | 고정 목록 | 거래를 여러 건 등록·수정·삭제한 뒤 요청 | N01과 같은 목록 (변경되지 않음) |
-| API-CAT-E01 | 메서드 | `POST /api/categories` | 405, `METHOD_NOT_ALLOWED` (분류를 추가할 수 없음) |
+| API-CAT-N01 | 분류 목록 | 요청 | 200, `expense` 이름이 `["식비","교통","주거","쇼핑","의료","문화·여가","기타"]`, `income` 이름이 `["월급","용돈","기타"]` (순서 포함 일치). 각 항목은 `id`, `type`, `name`, `is_default`(모두 `true`)를 가짐 |
+| API-CAT-N02 | 기본 분류 유지 | 거래를 여러 건 등록·수정·삭제한 뒤 요청 | N01과 같은 목록 (변경되지 않음) |
+| API-CAT-N03 | 정렬 | 지출 `간식`, `커피` 순서로 추가 후 요청 | `expense`가 기본 분류 7개 다음에 `간식`, `커피` 순서, 둘 다 `is_default: false` |
+| API-CAT-N04 | 재시작 중복 없음 | 같은 DB 파일로 앱을 다시 만들어 요청 | 기본 분류가 여전히 10개 (중복 생성 안 됨), 추가한 사용자 분류도 유지 |
+| API-CAT-N05 | MVP DB 이전 | `transactions`만 있는 MVP 시절 DB(거래 1건 포함)로 앱 시작 | `categories`가 생기고 기본 분류 10개가 들어감. 기존 거래가 그대로 조회됨 |
+| API-CAT-E01 | 메서드 | `PATCH /api/categories` | 405, `METHOD_NOT_ALLOWED` |
+| API-CAT-E02 | DB 오류 | DB 읽기 실패 | 500, `DATABASE_ERROR` |
 
 ### 1.3 `GET /api/transactions`
 
@@ -157,6 +162,62 @@
 | API-SUM-E03 | 정수 아님 | `month=abc` | 422, `INVALID_QUERY` |
 | API-SUM-E04 | DB 오류 | DB 읽기 실패 | 500, `DATABASE_ERROR` |
 
+### 1.8 `POST /api/categories` (v0.4)
+
+| ID | 대상 | 상황 | 기대 결과 |
+|---|---|---|---|
+| API-CADD-N01 | 분류 추가 | `{"type": "expense", "name": "간식"}` | 201, `{ id, type: "expense", name: "간식", is_default: false }`. 분류 목록에 나타남 |
+| API-CADD-N02 | 이름 공백 정리 | `name`이 `"  간식  "` | 201, `name`이 `"간식"` |
+| API-CADD-N03 | 다른 유형 같은 이름 | 지출 `부업`, 수입 `부업`을 차례로 추가 | 둘 다 201 |
+| API-CADD-N04 | 최대 길이 | `name`이 20자 | 201 |
+| API-CADD-N05 | 거래에 사용 | 지출 `간식` 추가 후 `type` expense, `category` 간식으로 거래 등록 | 201. 같은 이름으로 `type` income 거래 등록은 422 `INVALID_CATEGORY` |
+| API-CADD-N06 | 서버 필드 무시 | 본문에 `"is_default": true`, `"id": 999` 포함 | 201, `is_default`는 `false`, `id`는 999가 아님 |
+| API-CADD-E01 | JSON 오류 | 깨진 JSON, `[]` | 각각 400, `INVALID_JSON` |
+| API-CADD-E02 | 필수값 누락 | `type` 또는 `name`을 빼거나 `null`로 전송 | 각각 422, `MISSING_FIELD` |
+| API-CADD-E03 | 유형 오류 | `type`이 `"transfer"` | 422, `INVALID_TYPE` |
+| API-CADD-E04 | 빈 이름 | `name`이 `""`, `"   "` | 각각 422, `INVALID_CATEGORY_NAME` |
+| API-CADD-E05 | 길이 초과 | `name`이 21자 | 422, `INVALID_CATEGORY_NAME` |
+| API-CADD-E06 | 문자열 아님 | `name`이 `123`, `["a"]` | 각각 422, `INVALID_CATEGORY_NAME` |
+| API-CADD-E07 | 기본 분류와 중복 | 지출 `식비` 추가 | 409, `DUPLICATE_CATEGORY` |
+| API-CADD-E08 | 사용자 분류와 중복 | 지출 `간식` 추가 후 지출 `" 간식 "` 추가 | 두 번째는 409, `DUPLICATE_CATEGORY` |
+| API-CADD-E09 | 저장 안 됨 | E01~E08 각 요청 후 분류 수 확인 | 요청 전과 같음 |
+| API-CADD-E10 | DB 오류 | DB 쓰기 실패 | 500, `DATABASE_ERROR` |
+
+### 1.9 `PUT /api/categories/{id}` (v0.4)
+
+준비: 지출 `간식`(C1)을 추가하고, C1으로 거래 2건(10월, 11월)을 등록한다. 수입 `간식`(C2)을 추가하고 C2로 거래 1건을 등록한다.
+
+| ID | 대상 | 상황 | 기대 결과 |
+|---|---|---|---|
+| API-CREN-N01 | 이름 수정 | C1을 `커피·간식`으로 수정 | 200, `name`만 바뀌고 `id`, `type`, `is_default`는 그대로 |
+| API-CREN-N02 | 거래 분류 변경 | N01 후 10월·11월 목록 조회 | C1을 쓰던 지출 거래 2건의 `category`가 `커피·간식`. C2(수입 `간식`) 거래는 `간식` 그대로 |
+| API-CREN-N03 | 같은 이름 | C1을 `간식`(현재 이름)으로 수정 | 200, 변화 없음 |
+| API-CREN-N04 | 이름 공백 정리 | `name`이 `"  커피  "` | 200, `name`이 `"커피"` |
+| API-CREN-N05 | 유형 변경 무시 | 본문에 `"type": "income"` 포함 | 200, `type`은 `expense` 그대로 |
+| API-CREN-E01 | id 형식 | `id`가 `abc`, `0`, `-1` | 각각 422, `INVALID_ID` |
+| API-CREN-E02 | 없는 id | `id` 9999 | 404, `CATEGORY_NOT_FOUND` |
+| API-CREN-E03 | 기본 분류 | 지출 `식비`의 `id`로 수정 | 409, `DEFAULT_CATEGORY_LOCKED`, `식비`와 그 거래는 그대로 |
+| API-CREN-E04 | 기본 분류와 중복 | C1을 `식비`로 수정 | 409, `DUPLICATE_CATEGORY` |
+| API-CREN-E05 | 사용자 분류와 중복 | 지출 `커피` 추가 후 C1을 `커피`로 수정 | 409, `DUPLICATE_CATEGORY` |
+| API-CREN-E06 | 본문 검증 | `name` 없음, `""`, 21자, `123`, 깨진 JSON | 각각 API-CADD와 같은 상태 코드와 `code` |
+| API-CREN-E07 | 처리 순서 | 없는 `id` 9999 + 빈 이름 | 422, `INVALID_CATEGORY_NAME` (본문 검사가 존재 확인보다 먼저) |
+| API-CREN-E08 | 변경 안 됨 | E02~E07 각 요청 후 C1과 거래 조회 | C1 이름과 거래 분류가 요청 전과 같음 |
+| API-CREN-E09 | 중간 실패 롤백 | `transactions` 수정 시 오류를 내는 트리거를 만든 뒤 C1 이름 수정 | 500, `DATABASE_ERROR`. C1 이름과 거래 분류가 모두 그대로 |
+| API-CREN-E10 | DB 오류 | DB 쓰기 실패 | 500, `DATABASE_ERROR` |
+
+### 1.10 `DELETE /api/categories/{id}` (v0.4)
+
+| ID | 대상 | 상황 | 기대 결과 |
+|---|---|---|---|
+| API-CDEL-N01 | 삭제 | 거래가 없는 지출 `간식` 삭제 | 204, 본문 없음. 분류 목록에서 사라짐 |
+| API-CDEL-N02 | 다른 유형 거래 무관 | 수입 `부업`으로 거래 등록, 지출 `부업`은 거래 없음 → 지출 `부업` 삭제 | 204. 수입 `부업`과 그 거래는 그대로 |
+| API-CDEL-E01 | id 형식 | `id`가 `abc`, `0`, `-1` | 각각 422, `INVALID_ID` |
+| API-CDEL-E02 | 없는 id | `id` 9999 | 404, `CATEGORY_NOT_FOUND` |
+| API-CDEL-E03 | 두 번 삭제 | 같은 분류를 두 번 삭제 | 두 번째는 404, `CATEGORY_NOT_FOUND` |
+| API-CDEL-E04 | 기본 분류 | 지출 `식비`의 `id`로 삭제 | 409, `DEFAULT_CATEGORY_LOCKED`, `식비`가 그대로 |
+| API-CDEL-E05 | 사용 중 | 지출 `간식`으로 거래 2건 등록 후 `간식` 삭제 | 409, `CATEGORY_IN_USE`, `message`에 `2건` 포함. 분류와 거래가 그대로 |
+| API-CDEL-E06 | DB 오류 | DB 쓰기 실패 | 500, `DATABASE_ERROR`, 분류가 그대로 |
+
 ---
 
 ## 2. 컴포넌트 테스트
@@ -253,3 +314,23 @@
 | CMP-STATUS-N01 | 로딩 | `kind` loading, `onRetry` 없음 | 문구만 표시, `다시 시도` 버튼 없음 |
 | CMP-STATUS-N02 | 빈 목록 | `kind` empty | 문구만 표시, `다시 시도` 버튼 없음 |
 | CMP-STATUS-N03 | 에러 + 다시 시도 | `kind` error, `onRetry` 있음 | 문구와 `다시 시도` 버튼 표시, 클릭 시 `onRetry` 한 번 호출 |
+
+### 2.8 `CategoryManager` / `CategoryItem` (v0.4)
+
+| ID | 대상 | 상황 | 기대 결과 |
+|---|---|---|---|
+| CMP-CAT-N01 | 카드 표시 | 화면 열기 | 입력 폼 아래에 `분류 관리` 카드. 지출 7개·수입 3개 기본 분류에 `기본` 표시, `수정`·`삭제` 버튼 없음 |
+| CMP-CAT-N02 | 분류 추가 | 유형 지출, 이름 `간식` 입력 후 `추가` | 지출 목록 끝에 `간식`(수정·삭제 버튼 있음), 이름 입력칸이 비워짐, 입력 폼의 지출 분류 선택에도 `간식`이 생김 |
+| CMP-CAT-N03 | 추가한 분류로 거래 등록 | N02 후 입력 폼에서 `간식` 선택해 저장 | 거래 목록에 `간식` 거래 표시 |
+| CMP-CAT-N04 | 이름 수정 | `간식`의 `수정` 클릭 → `커피·간식` 입력 → `저장` | 분류 목록과 거래 목록의 이름이 `커피·간식`으로 바뀜 |
+| CMP-CAT-N05 | 수정 취소 | `수정` 클릭 후 `취소` | 이름 그대로, 요청 없음 |
+| CMP-CAT-N06 | 삭제 확인 창 / 취소 | 거래 없는 사용자 분류 `커피`의 `삭제` 클릭 후 취소 | 확인 창 `'커피'(지출) 분류를 삭제할까요?`, 분류 그대로 |
+| CMP-CAT-N07 | 삭제 | N06에서 `확인` | 분류 목록과 입력 폼 분류 선택에서 `커피`가 사라짐 |
+| CMP-CAT-N08 | 다른 선택 유지 | 입력 폼에서 `교통`을 고른 상태로 분류 추가 | 분류 목록을 다시 불러온 뒤에도 입력 폼의 `교통` 선택이 유지됨 |
+| CMP-CAT-E01 | 빈 이름 | 이름 비우고 `추가` | `분류 이름을 입력해 주세요.`, 요청 없음 |
+| CMP-CAT-E02 | 길이 초과 | 21자 이름으로 `추가` | `분류 이름은 20자 이하여야 합니다.`, 요청 없음 |
+| CMP-CAT-E03 | 중복 | 지출 `식비` 추가 | `지출에 이미 '식비' 분류가 있습니다.` |
+| CMP-CAT-E04 | 사용 중 삭제 | 거래 1건이 있는 사용자 분류 삭제 확인 | `이 분류를 사용하는 거래가 1건 있어 삭제할 수 없습니다.`, 분류 그대로 |
+| CMP-CAT-E05 | 이름 수정 검사 | 수정 입력칸을 비우고 `저장` | `분류 이름을 입력해 주세요.`, 요청 없음, 수정 모드 유지 |
+| CMP-CAT-E06 | 연결 실패 | 서버 종료 후 `추가` | `서버에 연결할 수 없습니다.`, 입력값 유지 |
+| CMP-CAT-E07 | 불러오기 실패 | 분류 API 실패 | 카드 목록 자리에 에러 문구와 `다시 시도` 버튼 |

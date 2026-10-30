@@ -1,7 +1,7 @@
 # API 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/DATA_MODEL.md` (보조: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절)
 
 ## 1. 공통 규칙
 
@@ -16,12 +16,15 @@
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| GET | `/api/categories` | 고정 분류 목록 조회 |
+| GET | `/api/categories` | 분류 목록 조회 (v0.4에서 응답 모양 변경) |
 | GET | `/api/transactions` | 월별 거래 목록 조회 |
 | POST | `/api/transactions` | 거래 등록 |
 | PUT | `/api/transactions/{id}` | 거래 수정 |
 | DELETE | `/api/transactions/{id}` | 거래 삭제 |
 | GET | `/api/summary` | 월별 요약 조회 |
+| POST | `/api/categories` | 분류 추가 (v0.4) |
+| PUT | `/api/categories/{id}` | 사용자 분류 이름 수정 (v0.4) |
+| DELETE | `/api/categories/{id}` | 사용자 분류 삭제 (v0.4) |
 
 ### 1.2 에러 형식
 
@@ -38,24 +41,29 @@
 
 - `code`: 프로그램이 구분하는 데 쓰는 고정 문자열(대문자 + 밑줄)
 - `message`: 화면에 그대로 보여 줄 수 있는 한국어 설명
-- 입력값 문제가 여러 개면 **첫 번째 문제 하나만** 돌려준다. 검사 순서는 `date` → `type` → `amount` → `category` → `memo`다.
+- 입력값 문제가 여러 개면 **첫 번째 문제 하나만** 돌려준다. 검사 순서는 거래가 `date` → `type` → `amount` → `category` → `memo`, 분류가 `type` → `name`이다.
 
 ### 1.3 에러 코드 목록
 
 | code | 상태 코드 | 상황 |
 |---|---|---|
 | `INVALID_JSON` | 400 | 요청 본문이 올바른 JSON 객체가 아님 |
-| `MISSING_FIELD` | 422 | 필수 필드(`date`, `type`, `amount`, `category`)가 없거나 `null` |
+| `MISSING_FIELD` | 422 | 필수 필드(거래: `date`, `type`, `amount`, `category` / 분류: `type`, `name`)가 없거나 `null` |
 | `INVALID_DATE` | 422 | `date`가 `YYYY-MM-DD` 형식이 아니거나 존재하지 않는 날짜 |
 | `INVALID_TYPE` | 422 | `type`이 `income`, `expense`가 아님 |
 | `INVALID_AMOUNT` | 422 | `amount`가 정수가 아니거나(소수, 문자열, 불리언) 1 미만이거나 허용 최대값 초과 |
-| `INVALID_CATEGORY` | 422 | `category`가 `type`에 해당하는 고정 분류가 아님 |
+| `INVALID_CATEGORY` | 422 | `category`가 `type`에 해당하는 분류가 아님 (v0.4부터: 등록된 기본·사용자 분류 기준) |
 | `INVALID_MEMO` | 422 | `memo`가 문자열이나 `null`이 아님 |
 | `INVALID_QUERY` | 422 | `year`, `month` 쿼리가 없거나 범위를 벗어남 |
 | `INVALID_ID` | 422 | 경로의 `id`가 1 ~ 9,223,372,036,854,775,807(SQLite 정수 최대값) 범위의 정수가 아님 |
 | `TRANSACTION_NOT_FOUND` | 404 | 해당 `id`의 거래가 없음 |
+| `INVALID_CATEGORY_NAME` | 422 | (v0.4) 분류 `name`이 문자열이 아니거나, 앞뒤 공백 제거 후 비어 있거나 20자를 넘음 |
+| `CATEGORY_NOT_FOUND` | 404 | (v0.4) 해당 `id`의 분류가 없음 |
+| `DUPLICATE_CATEGORY` | 409 | (v0.4) 같은 유형에 같은 이름의 분류가 이미 있음 (기본 분류 포함) |
+| `DEFAULT_CATEGORY_LOCKED` | 409 | (v0.4) 기본 분류를 수정하거나 삭제하려 함 |
+| `CATEGORY_IN_USE` | 409 | (v0.4) 삭제하려는 분류를 사용하는 거래가 있음 |
 | `NOT_FOUND` | 404 | 존재하지 않는 API 경로 |
-| `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 지원하지 않는 메서드 (예: `GET /api/transactions/1`, `POST /api/categories`) |
+| `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 지원하지 않는 메서드 (예: `GET /api/transactions/1`, `PATCH /api/categories`) |
 | `DATABASE_ERROR` | 500 | `budget.db` 읽기·쓰기 실패 |
 | `INTERNAL_ERROR` | 500 | 그 밖의 예상하지 못한 서버 오류 |
 
@@ -84,7 +92,7 @@
 | `date` | O | `YYYY-MM-DD`, 실제 존재하는 날짜 |
 | `type` | O | `income` 또는 `expense` |
 | `amount` | O | 정수, 1 이상, 9,007,199,254,740,991 이하 |
-| `category` | O | `type`에 해당하는 고정 분류 문자열 |
+| `category` | O | `type`에 해당하는 분류 이름 문자열 (v0.4부터 사용자 분류 포함) |
 | `memo` | X | 문자열 또는 `null`. 앞뒤 공백을 제거한 뒤 빈 문자열이면 `null`로 저장 |
 
 - `id`, `created_at`을 보내도 무시한다.
@@ -93,9 +101,9 @@
 
 ## 3. 엔드포인트
 
-### 3.1 `GET /api/categories` — 고정 분류 목록 조회
+### 3.1 `GET /api/categories` — 분류 목록 조회
 
-입력 폼의 분류 선택 목록을 채울 때 사용한다.
+입력 폼의 분류 선택 목록과 분류 관리 카드를 채울 때 사용한다.
 
 **요청**
 
@@ -103,20 +111,37 @@
 GET /api/categories
 ```
 
-**응답 `200 OK`**
+**응답 `200 OK`** (v0.4)
+
+순서: 기본 분류가 먼저(정해진 순서), 그다음 사용자 분류가 추가한 순서
 
 ```json
 {
-  "expense": ["식비", "교통", "주거", "쇼핑", "의료", "문화·여가", "기타"],
-  "income": ["월급", "용돈", "기타"]
+  "expense": [
+    { "id": 1, "type": "expense", "name": "식비", "is_default": true },
+    { "id": 2, "type": "expense", "name": "교통", "is_default": true },
+    { "id": 3, "type": "expense", "name": "주거", "is_default": true },
+    { "id": 4, "type": "expense", "name": "쇼핑", "is_default": true },
+    { "id": 5, "type": "expense", "name": "의료", "is_default": true },
+    { "id": 6, "type": "expense", "name": "문화·여가", "is_default": true },
+    { "id": 7, "type": "expense", "name": "기타", "is_default": true },
+    { "id": 11, "type": "expense", "name": "간식", "is_default": false }
+  ],
+  "income": [
+    { "id": 8, "type": "income", "name": "월급", "is_default": true },
+    { "id": 9, "type": "income", "name": "용돈", "is_default": true },
+    { "id": 10, "type": "income", "name": "기타", "is_default": true }
+  ]
 }
 ```
+
+- MVP(v0.1 ~ v0.3)의 응답은 이름 배열(`{"expense": ["식비", ...], "income": [...]}`)이었다.
 
 **에러**
 
 | 상황 | 상태 코드 | code |
 |---|---|---|
-| 예상하지 못한 서버 오류 | 500 | `INTERNAL_ERROR` |
+| DB 읽기 실패 | 500 | `DATABASE_ERROR` |
 
 ---
 
@@ -386,6 +411,117 @@ GET /api/summary?year=2026&month=10
 | `month`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
 | `year`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `연도는 1부터 9999 사이여야 합니다.` |
 | DB 읽기 실패 | 500 | `DATABASE_ERROR` | `월별 요약을 불러오지 못했습니다.` |
+
+---
+
+### 3.7 `POST /api/categories` — 분류 추가 (v0.4)
+
+**요청 본문**
+
+| 필드 | 필수 | 규칙 |
+|---|---|---|
+| `type` | O | `income` 또는 `expense` |
+| `name` | O | 문자열. 앞뒤 공백을 제거한 뒤 1~20자. 같은 `type` 안에서 기존 분류(기본 분류 포함)와 겹치지 않음 |
+
+- `id`, `is_default` 등 위에 없는 필드는 무시한다. 추가한 분류는 항상 `is_default: false`다.
+
+```
+POST /api/categories
+Content-Type: application/json
+```
+
+```json
+{ "type": "expense", "name": "  간식  " }
+```
+
+**응답 `201 Created`**
+
+```json
+{ "id": 11, "type": "expense", "name": "간식", "is_default": false }
+```
+
+**에러**
+
+| 상황 | 상태 코드 | code | 응답 예시 `message` |
+|---|---|---|---|
+| JSON이 깨짐 | 400 | `INVALID_JSON` | `요청 형식이 올바르지 않습니다.` |
+| `type` 없음 | 422 | `MISSING_FIELD` | `거래 유형을 선택해 주세요.` |
+| `name` 없음 | 422 | `MISSING_FIELD` | `분류 이름을 입력해 주세요.` |
+| 잘못된 유형 | 422 | `INVALID_TYPE` | `거래 유형은 수입 또는 지출이어야 합니다.` |
+| 빈 이름 (`""`, `"   "`) | 422 | `INVALID_CATEGORY_NAME` | `분류 이름을 입력해 주세요.` |
+| 20자 초과 | 422 | `INVALID_CATEGORY_NAME` | `분류 이름은 20자 이하여야 합니다.` |
+| 문자열 아님 (`123`) | 422 | `INVALID_CATEGORY_NAME` | `분류 이름은 문자열이어야 합니다.` |
+| 같은 유형에 같은 이름 있음 | 409 | `DUPLICATE_CATEGORY` | `지출에 이미 '식비' 분류가 있습니다.` |
+| DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `분류를 저장하지 못했습니다.` |
+
+- 에러가 나면 분류를 저장하지 않는다.
+
+---
+
+### 3.8 `PUT /api/categories/{id}` — 사용자 분류 이름 수정 (v0.4)
+
+이름만 바꿀 수 있다. 본문에 `type`이 있어도 무시한다. 이름을 바꾸면 같은 트랜잭션에서 그 분류를 쓰던 거래(같은 `type`, 옛 이름)의 `category`도 새 이름으로 바뀐다.
+
+**요청**
+
+```
+PUT /api/categories/11
+Content-Type: application/json
+```
+
+```json
+{ "name": "커피·간식" }
+```
+
+**응답 `200 OK`**
+
+```json
+{ "id": 11, "type": "expense", "name": "커피·간식", "is_default": false }
+```
+
+- 지금 이름과 같은 이름으로 수정하면 아무것도 바뀌지 않고 200을 돌려준다.
+
+**에러**
+
+| 상황 | 상태 코드 | code | 응답 예시 `message` |
+|---|---|---|---|
+| `id`가 `abc`, `0`, `-1` 등 | 422 | `INVALID_ID` | `분류 ID가 올바르지 않습니다.` |
+| 본문 검증 실패 (`name` 없음·빈 이름·20자 초과·문자열 아님, 깨진 JSON) | 400 / 422 | `POST /api/categories`와 같음 | `POST /api/categories`와 같음 |
+| 해당 `id` 분류 없음 | 404 | `CATEGORY_NOT_FOUND` | `이미 삭제되었거나 없는 분류입니다.` |
+| 기본 분류 | 409 | `DEFAULT_CATEGORY_LOCKED` | `기본 분류는 수정하거나 삭제할 수 없습니다.` |
+| 같은 유형에 같은 이름 있음 | 409 | `DUPLICATE_CATEGORY` | `지출에 이미 '식비' 분류가 있습니다.` |
+| DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `분류를 수정하지 못했습니다.` |
+
+- 처리 순서: `id` 검사 → 본문 검사 → 분류 존재 확인 → 기본 분류 확인 → 이름 중복 확인
+- 에러가 나면 분류와 거래 모두 바뀌지 않는다.
+
+---
+
+### 3.9 `DELETE /api/categories/{id}` — 사용자 분류 삭제 (v0.4)
+
+화면에서 확인 창을 거친 뒤에만 호출한다.
+
+**요청**
+
+```
+DELETE /api/categories/11
+```
+
+**응답 `204 No Content`**
+
+본문 없음.
+
+**에러**
+
+| 상황 | 상태 코드 | code | 응답 예시 `message` |
+|---|---|---|---|
+| `id`가 `abc`, `0`, `-1` 등 | 422 | `INVALID_ID` | `분류 ID가 올바르지 않습니다.` |
+| 해당 `id` 분류 없음 | 404 | `CATEGORY_NOT_FOUND` | `이미 삭제되었거나 없는 분류입니다.` |
+| 기본 분류 | 409 | `DEFAULT_CATEGORY_LOCKED` | `기본 분류는 수정하거나 삭제할 수 없습니다.` |
+| 이 분류를 쓰는 거래가 있음 | 409 | `CATEGORY_IN_USE` | `이 분류를 사용하는 거래가 3건 있어 삭제할 수 없습니다.` |
+| DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `분류를 삭제하지 못했습니다.` |
+
+- 거래 사용 여부는 같은 `type`의 거래만 센다. 예: 수입 `부업` 거래가 있어도 지출 `부업` 분류는 삭제할 수 있다.
 
 ## 4. 구현 참고
 

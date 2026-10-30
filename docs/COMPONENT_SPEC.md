@@ -1,7 +1,7 @@
 # 컴포넌트 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md`, `docs/API_SPEC.md` (보조: `docs/DATA_MODEL.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(4.8 ~ 4.9절)
 
 ## 1. 개요
 
@@ -17,10 +17,12 @@ App
 ├─ MonthSelector          연·월 선택
 ├─ SummaryPanel           선택한 월의 수입·지출 합계, 잔액
 ├─ TransactionForm        거래 등록·수정 폼 (유형, 거래일, 금액, 분류, 메모)
+├─ CategoryManager        (v0.4) 분류 관리 카드: 유형별 분류 목록, 분류 추가
+│  └─ CategoryItem        (v0.4) 분류 1개 (사용자 분류만 수정·삭제 버튼)
 └─ TransactionList        선택한 월의 거래 목록
    └─ TransactionItem     거래 1건 (수정·삭제 버튼)
 
-StatusMessage             로딩·빈 목록·에러 문구 (SummaryPanel, TransactionForm, TransactionList 안에서 사용)
+StatusMessage             로딩·빈 목록·에러 문구 (SummaryPanel, TransactionForm, CategoryManager, TransactionList 안에서 사용)
 ```
 
 ## 3. 공통 타입
@@ -29,8 +31,8 @@ StatusMessage             로딩·빈 목록·에러 문구 (SummaryPanel, Trans
 /** 선택한 연·월 */
 type YearMonth = { year: number; month: number }; // month: 1 ~ 12
 
-/** 고정 분류 목록 (GET /api/categories 응답) */
-type Categories = { expense: string[]; income: string[] };
+/** 분류 목록 (GET /api/categories 응답). v0.4부터 DATA_MODEL 6.4절의 Category 객체 배열 */
+type Categories = { expense: Category[]; income: Category[] };
 
 /** 서버 에러 (API_SPEC 1.2절) */
 type ApiError = { code: string; message: string };
@@ -61,6 +63,10 @@ type AsyncState<T> =
 | `formError` | `ApiError \| null` | `null` |
 | `deletingId` | `number \| null` | `null` |
 | `formResetKey` | `number` | `0` (폼을 새로 채울 때마다 1 증가: 저장 성공, 수정 시작, 수정 취소, 수정 중인 거래 삭제) |
+| `categoryBusy` | `boolean` | `false` (v0.4, 분류 추가·수정·삭제 요청 중) |
+| `categoryError` | `ApiError \| null` | `null` (v0.4) |
+| `renamingCategoryId` | `number \| null` | `null` (v0.4, 이름 수정 중인 분류) |
+| `categoryResetKey` | `number` | `0` (v0.4, 분류 추가 성공 시 1 증가 → 추가 입력칸 비움) |
 
 **하는 일**
 
@@ -69,6 +75,8 @@ type AsyncState<T> =
 | 처음 열 때 | `GET /api/categories`, 그리고 `selected` 기준으로 `GET /api/transactions`, `GET /api/summary` 호출 |
 | 월 변경 | `selected` 변경 → 목록·요약 다시 조회 |
 | 등록·수정·삭제 성공 | 목록·요약 다시 조회 |
+| (v0.4) 분류 추가·삭제 성공 | 분류 목록 다시 조회 |
+| (v0.4) 분류 이름 수정 성공 | 분류 목록과 거래 목록 다시 조회 (거래에 표시되는 분류 이름이 바뀌므로) |
 
 ### 4.2 `MonthSelector`
 
@@ -214,6 +222,71 @@ type StatusMessageProps = {
 };
 ```
 
+### 4.8 `CategoryManager` (v0.4)
+
+입력 폼 아래의 별도 카드다. 제목은 `분류 관리`.
+
+```ts
+type CategoryManagerProps = {
+  categories: AsyncState<Categories>;
+  busy: boolean;                           // 추가·수정·삭제 요청 중이면 true
+  error: ApiError | null;                  // 클라이언트 검사 또는 서버 에러
+  renamingId: number | null;               // 이름 수정 중인 분류
+  resetKey: number;                        // 바뀔 때만 추가 입력칸을 비움 (추가 성공 시)
+  onAdd: (input: CategoryInput) => void;
+  onStartRename: (category: Category) => void;
+  onRename: (category: Category, name: string) => void;
+  onCancelRename: () => void;
+  onDelete: (category: Category) => void;
+  onRetry: () => void;
+};
+```
+
+- 지출 분류와 수입 분류를 나눠 목록으로 보여 준다. 순서는 서버 응답 순서(기본 분류 → 추가한 순서)다.
+- 아래에 분류 추가 입력이 있다: 유형(라디오: 지출 / 수입, 기본값 지출), 이름(`<input type="text">`), `추가` 버튼.
+- 입력 폼(4.4)의 분류 선택에는 각 분류의 `name`이 표시된다.
+
+| 사용자 동작 | 결과 |
+|---|---|
+| 유형·이름을 입력하고 `추가` 클릭 (입력 정상) | 버튼 비활성화·문구 `추가 중...` → `POST /api/categories` → 성공 시 이름 입력칸을 비우고 분류 목록 다시 조회 (입력 폼 분류 선택에도 나타남) |
+| `추가` 클릭 (입력 오류) | 요청을 보내지 않고 카드 위쪽에 에러 문구 표시 |
+| 사용자 분류의 `수정` 클릭 | `onStartRename` → 그 분류 자리가 이름 입력칸(현재 이름이 채워짐)과 `저장`, `취소` 버튼으로 바뀜 |
+| 이름 수정 후 `저장` 클릭 (입력 정상) | `PUT /api/categories/{id}` → 성공 시 수정 모드 종료, 분류 목록과 거래 목록 다시 조회 |
+| 이름 수정 중 `취소` 클릭 | 요청 없이 수정 모드 종료 |
+| 사용자 분류의 `삭제` 클릭 | 확인 창 `'간식'(지출) 분류를 삭제할까요?` 표시 |
+| 확인 창에서 `확인` | `DELETE /api/categories/{id}` → 성공 시 분류 목록 다시 조회 |
+| 확인 창에서 `취소` | 아무 요청도 보내지 않음 |
+| 서버가 에러 응답 (중복, 사용 중, 기본 분류 등) | 카드 위쪽에 서버 `message` 표시, 입력값 유지. 404면 분류 목록 다시 조회 |
+| 분류 불러오기 실패 상태에서 `다시 시도` 클릭 | `onRetry` → `GET /api/categories` 다시 호출 |
+
+**클라이언트 검사 문구** (서버 `message`와 같게 맞춘다)
+
+| 상황 | 문구 |
+|---|---|
+| 이름이 비었거나 공백만 있음 | `분류 이름을 입력해 주세요.` |
+| 앞뒤 공백 제거 후 20자 초과 | `분류 이름은 20자 이하여야 합니다.` |
+
+- 같은 유형 안 이름 중복은 서버가 검사한다(`DUPLICATE_CATEGORY`).
+- 추가·수정·삭제 요청 중에는 카드 안의 모든 버튼을 비활성화한다.
+- 이름을 수정한 분류를 입력 폼(4.4)에서 선택해 두었다면, 분류 목록을 다시 불러온 뒤 그 선택은 `분류 선택`으로 초기화된다.
+
+### 4.9 `CategoryItem` (v0.4)
+
+```ts
+type CategoryItemProps = {
+  category: Category;
+  isRenaming: boolean;
+  busy: boolean;
+  onStartRename: (category: Category) => void;
+  onRename: (category: Category, name: string) => void;
+  onCancelRename: () => void;
+  onDelete: (category: Category) => void;
+};
+```
+
+- 기본 분류: 이름과 `기본` 표시만 보여 주고 `수정`·`삭제` 버튼은 없다.
+- 사용자 분류: 이름과 `수정`·`삭제` 버튼을 보여 준다. `isRenaming`이면 이름 입력칸과 `저장`·`취소` 버튼을 보여 준다.
+
 ## 5. 상태별 문구
 
 ### 5.1 로딩
@@ -225,6 +298,8 @@ type StatusMessageProps = {
 | `TransactionForm` 분류 선택 | `분류를 불러오는 중...` (분류 선택과 저장 버튼 비활성화) |
 | `TransactionForm` 저장 버튼 | `저장 중...` |
 | `TransactionItem` 삭제 버튼 | `삭제 중...` |
+| (v0.4) `CategoryManager` 목록 | `분류를 불러오는 중...` |
+| (v0.4) `CategoryManager` 추가 버튼 | `추가 중...` |
 
 ### 5.2 빈 목록
 
@@ -250,5 +325,7 @@ type StatusMessageProps = {
 | `TransactionForm` 분류 불러오기 | 분류 선택 자리에 에러 문구 | 있음 |
 | `TransactionForm` 저장 | 폼 위에 에러 문구 | 없음 (다시 저장 클릭) |
 | `TransactionItem` 삭제 | `alert` | 없음 |
+| (v0.4) `CategoryManager` 불러오기 | 분류 목록 자리에 에러 문구 | 있음 |
+| (v0.4) `CategoryManager` 추가·수정·삭제 | 카드 위쪽에 에러 문구 | 없음 (다시 클릭) |
 
 - 에러가 나도 이전에 보이던 성공 데이터를 남겨 두지 않는다. 화면이 실제 저장 상태와 다르게 보이지 않게 하기 위해서다.

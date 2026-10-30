@@ -1,14 +1,14 @@
 # TRD 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md`, `docs/SPEC.md`, `CLAUDE.md`
-> 대상 범위: MVP(v0.1 ~ v0.3)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(11절)
 
 ## 0. 확정 사항
 
 | 항목 | 결정 |
 |---|---|
 | 데이터 저장 위치 | 서버 컴퓨터의 SQLite `budget.db` |
-| 분류 편집 | MVP에서는 고정 목록 (편집은 v0.4) |
+| 분류 편집 | MVP에서는 고정 목록. v0.4에서 사용자 분류 추가·이름 수정·삭제 (기본 분류는 고정, 11절) |
 | 기술 스택 | Python + FastAPI (백엔드), JavaScript (프런트엔드), SQLite (DB) |
 
 ## 1. 시스템 개요
@@ -32,7 +32,7 @@
 | 웹 서버 | Uvicorn | FastAPI 앱을 실제로 실행해 브라우저 요청을 받아 주는 프로그램으로, FastAPI 공식 문서가 기본으로 쓰는 서버다. |
 | 입력 검증 | Pydantic | "금액은 1 이상의 정수" 같은 규칙을 클래스로 적어 두면 잘못된 요청을 자동으로 거절해 준다(FastAPI에 포함). |
 | 데이터베이스 | SQLite | 설치나 별도 DB 서버 없이 `budget.db` 파일 하나로 동작해서, 혼자 쓰는 앱에 가장 간단하다. |
-| DB 접근 | Python 표준 `sqlite3` 모듈 | Python에 기본 포함되어 추가 설치가 필요 없고, 테이블이 하나뿐이라 ORM 없이 SQL로 충분하다. |
+| DB 접근 | Python 표준 `sqlite3` 모듈 | Python에 기본 포함되어 추가 설치가 필요 없고, 테이블이 1~2개뿐이라 ORM 없이 SQL로 충분하다. |
 | 화면 | HTML + CSS + 순수 JavaScript | 빌드 도구나 프레임워크 없이 브라우저가 바로 실행할 수 있어서, 화면 하나짜리 앱에 배울 것이 가장 적다. |
 | 화면 ↔ 서버 통신 | 브라우저 `fetch` API | 브라우저에 기본 내장된 기능으로, 버튼을 누르면 페이지 이동 없이 서버에 JSON을 보내고 받을 수 있다. |
 | 정적 파일 제공 | FastAPI `StaticFiles` | HTML/JS/CSS 파일을 같은 서버에서 내려 주므로 서버를 하나만 실행하면 된다. |
@@ -40,7 +40,7 @@
 
 ### 사용하지 않는 것과 이유
 
-- **SQLAlchemy 등 ORM**: 테이블 1개, 쿼리 몇 개뿐이라 배울 양에 비해 이득이 적다.
+- **SQLAlchemy 등 ORM**: 테이블 1~2개, 쿼리 몇 개뿐이라 배울 양에 비해 이득이 적다.
 - **React/Vue 등 프론트엔드 프레임워크**: 화면이 하나이고 빌드 과정이 추가되어 MVP에 과하다.
 - **템플릿 엔진(Jinja2)**: 화면은 정적 HTML로 두고 데이터는 JS가 API로 받아 그리므로 필요 없다.
 
@@ -275,4 +275,82 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 
 ## 10. 범위 밖 (PRD와 동일)
 
-로그인·다중 사용자, 동기화·온라인 백업, 앱 내 DB 백업 버튼(v0.5), 사용자 분류 편집(v0.4), 예산·반복 거래·알림, 영수증 자동 분류, 은행 연동, 통계 차트, 파일 내보내기, 삭제 복구.
+로그인·다중 사용자, 동기화·온라인 백업, 앱 내 DB 백업 버튼(v0.5), 예산·반복 거래·알림, 영수증 자동 분류, 은행 연동, 통계 차트, 파일 내보내기, 삭제 복구. 사용자 분류 편집은 v0.4(11절)에서 다룬다.
+
+## 11. v0.4 사용자 분류 편집
+
+> 요구사항: SPEC FR-8, PRD F-10
+
+### 11.1 설계 방향
+
+| 결정 | 이유 (한 줄 설명) |
+|---|---|
+| 분류를 `categories` 테이블에 저장하고 기본 분류도 같은 테이블에 넣는다 | 이름 중복 금지를 DB의 `UNIQUE` 제약으로 기본 분류까지 한 번에 지킬 수 있다. |
+| `transactions.category`는 지금처럼 분류 **이름 문자열**로 둔다 | 기존 `budget.db`의 거래 테이블을 바꾸지 않아도 되고, 거래 API의 요청·응답 모양도 그대로 유지된다. |
+| 거래와 분류는 `(type, category)` ↔ `(type, name)`으로 연결한다 | 같은 유형 안에서 이름이 유일하므로 이 두 값만으로 분류를 정확히 찾을 수 있다. |
+| 외래 키(FOREIGN KEY)는 쓰지 않고, 이름 수정·삭제를 한 트랜잭션 안에서 코드로 처리한다 | SQLite는 이미 있는 테이블에 외래 키를 추가할 수 없어 테이블을 새로 만들어 옮겨야 하는데, 혼자 쓰는 앱에 비해 이전 작업이 크다. |
+
+### 11.2 테이블 추가와 기존 DB 이전
+
+```sql
+CREATE TABLE IF NOT EXISTS categories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
+    name        TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 20),
+    is_default  INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    UNIQUE (type, name)
+);
+```
+
+- 서버 시작 시 `init_db()`가 `categories` 테이블을 만들고, 기본 분류 10개를 `INSERT OR IGNORE`로 넣는다. (`is_default = 1`)
+- MVP에서 쓰던 `budget.db`도 그대로 사용할 수 있다. 기존 거래의 분류는 모두 기본 분류이므로 별도 데이터 변환이 필요 없다.
+- `transactions` 테이블은 바꾸지 않는다.
+
+### 11.3 주요 처리
+
+| 작업 | 처리 (모두 `with conn:` 한 트랜잭션) |
+|---|---|
+| 분류 목록 | `SELECT ... FROM categories ORDER BY is_default DESC, id` → 기본 분류가 먼저, 사용자 분류는 추가한 순서 |
+| 분류 추가 | 같은 `(type, name)`이 있으면 거절, 없으면 `INSERT` (`is_default = 0`) |
+| 이름 수정 | 기본 분류면 거절 → 새 이름 중복이면 거절 → `UPDATE categories SET name = 새 이름` + `UPDATE transactions SET category = 새 이름 WHERE type = ? AND category = 옛 이름` |
+| 분류 삭제 | 기본 분류면 거절 → `SELECT COUNT(*) FROM transactions WHERE type = ? AND category = ?`가 1 이상이면 건수와 함께 거절 → 0이면 `DELETE` |
+| 거래 등록·수정 | 분류 검사를 `categories.py` 상수 대신 `categories` 테이블에서 `(type, name)`이 있는지로 바꾼다 |
+
+- 이름 수정에서 두 `UPDATE` 중 하나라도 실패하면 둘 다 롤백되어, 분류 이름과 거래의 분류가 어긋나지 않는다.
+- 분류 이름은 앞뒤 공백을 제거한 뒤 저장한다.
+
+### 11.4 API 변경 (상세는 API_SPEC에서 정한다)
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/categories` | **응답 모양 변경**: 이름 배열 대신 `id`, `name`, `is_default`를 가진 객체 배열 |
+| POST | `/api/categories` | 분류 추가 (`type`, `name`) |
+| PUT | `/api/categories/{id}` | 사용자 분류 이름 수정 (`name`) |
+| DELETE | `/api/categories/{id}` | 사용자 분류 삭제 |
+
+- `GET /api/categories` 응답 모양이 바뀌므로 화면(`app.js`)과 기존 테스트(`API-CAT-N01`)도 함께 바꾼다.
+
+### 11.5 화면 변경 (상세는 COMPONENT_SPEC에서 정한다)
+
+- 분류 관리 영역을 추가한다: 유형별 분류 목록, 분류 추가 입력, 사용자 분류의 이름 수정·삭제 버튼.
+- 기본 분류에는 수정·삭제 버튼을 표시하지 않는다.
+- 분류를 추가·수정·삭제하면 분류 목록, 입력 폼의 분류 선택, 거래 목록(이름 수정 시)을 다시 불러온다.
+
+### 11.6 테스트 계획 추가
+
+| 구분 | 확인 내용 |
+|---|---|
+| 초기화 | 새 DB와 MVP 시절 DB 모두에서 기본 분류 10개가 한 번만 생김 (서버 재시작해도 중복 없음) |
+| 추가 | 유형별 추가, 추가한 분류로 거래 등록 가능, 빈 이름·같은 유형 중복(기본 분류 포함) 거절, 다른 유형 같은 이름 허용 |
+| 이름 수정 | 사용자 분류 이름 변경 시 그 분류의 거래만 새 이름으로 바뀜 (다른 유형의 같은 이름 거래는 그대로), 기본 분류 수정 거절, 중복 이름 거절 |
+| 삭제 | 거래 없는 사용자 분류 삭제, 거래 있는 분류는 건수와 함께 거절, 기본 분류 삭제 거절, 없는 id는 404 |
+| 일관성 | 이름 수정 중 DB 오류가 나면 분류 이름과 거래의 분류가 모두 바뀌지 않음 |
+
+### 11.7 확정 사항
+
+| 항목 | 결정 |
+|---|---|
+| 분류 이름 길이 | 앞뒤 공백 제거 후 1~20자 |
+| 분류 삭제 | 거래 삭제처럼 확인 창을 띄우고, 확인한 경우에만 삭제 요청 |
+| 분류 관리 화면 위치 | 입력 폼 아래 별도 카드 |
+| 새 에러 코드 | API_SPEC 1.3절 |
