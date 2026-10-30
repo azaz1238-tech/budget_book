@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field, StrictInt, StrictStr, ValidationInfo, field_validator
 
 from app.categories import MAX_CATEGORY_NAME_LENGTH, TYPE_LABELS
-from app.db import category_exists
+from app.db import category_exists, find_category_by_id
 
 # 브라우저 JavaScript가 정확히 다룰 수 있는 가장 큰 정수 (Number.MAX_SAFE_INTEGER)
 MAX_AMOUNT = 9007199254740991
@@ -49,10 +49,15 @@ class TransactionInput(BaseModel):
     @field_validator("memo")
     @classmethod
     def normalize_memo(cls, value):
-        if value is None:
-            return None
-        value = value.strip()
-        return value or None
+        return normalize_memo(value)
+
+
+def normalize_memo(value):
+    """앞뒤 공백을 제거하고, 비면 None으로 저장한다."""
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 def normalize_category_name(value):
@@ -78,3 +83,45 @@ class CategoryRename(BaseModel):
     """분류 이름 수정 본문. 유형은 바꿀 수 없으므로 type은 무시한다."""
 
     name: CategoryName
+
+
+Amount = Annotated[StrictInt, Field(ge=1, le=MAX_AMOUNT)]
+
+
+class BudgetInput(BaseModel):
+    """v0.10 예산 본문."""
+
+    amount: Amount
+
+
+class RecurringInput(BaseModel):
+    """v0.11 고정 거래 추가·수정 본문. 검사 순서: day → type → amount → category_id → memo"""
+
+    day: Annotated[StrictInt, Field(ge=1, le=31)]
+    type: Literal["income", "expense"]
+    amount: Amount
+    category_id: StrictInt
+    memo: StrictStr | None = None
+
+    @field_validator("category_id")
+    @classmethod
+    def check_category(cls, value, info: ValidationInfo):
+        row = find_category_by_id(value)
+        if row is None:
+            raise ValueError("분류를 찾을 수 없습니다.")
+        type_ = info.data.get("type")
+        if type_ is not None and row["type"] != type_:
+            raise ValueError(f"{TYPE_LABELS[type_]}에는 '{row['name']}' 분류를 사용할 수 없습니다.")
+        return value
+
+    @field_validator("memo")
+    @classmethod
+    def normalize_memo(cls, value):
+        return normalize_memo(value)
+
+
+class RecurringApplyInput(BaseModel):
+    """v0.11 고정 거래 불러오기 본문."""
+
+    year: Annotated[StrictInt, Field(ge=1, le=9999)]
+    month: Annotated[StrictInt, Field(ge=1, le=12)]

@@ -28,6 +28,29 @@ CREATE TABLE IF NOT EXISTS categories (
     is_default  INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     UNIQUE (type, name)
 );
+
+-- v0.10 분류별 월 예산 (지출 분류만, 모든 달 공통)
+CREATE TABLE IF NOT EXISTS budgets (
+    category_id INTEGER PRIMARY KEY,
+    amount      INTEGER NOT NULL CHECK (amount >= 1)
+);
+
+-- v0.11 고정 거래 틀과 불러온 기록
+CREATE TABLE IF NOT EXISTS recurring_transactions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    day         INTEGER NOT NULL CHECK (day BETWEEN 1 AND 31),
+    type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
+    amount      INTEGER NOT NULL CHECK (amount >= 1),
+    category_id INTEGER NOT NULL,
+    memo        TEXT,
+    created_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recurring_applied (
+    recurring_id INTEGER NOT NULL,
+    year_month   TEXT    NOT NULL,
+    PRIMARY KEY (recurring_id, year_month)
+);
 """
 
 
@@ -52,6 +75,14 @@ def init_db():
                 "INSERT OR IGNORE INTO categories (type, name, is_default) VALUES (?, ?, 1)",
                 [(type_, name) for type_, names in DEFAULT_CATEGORIES.items() for name in names],
             )
+    finally:
+        conn.close()
+
+
+def find_category_by_id(category_id):
+    conn = connect()
+    try:
+        return conn.execute("SELECT id, type, name FROM categories WHERE id = ?", (category_id,)).fetchone()
     finally:
         conn.close()
 

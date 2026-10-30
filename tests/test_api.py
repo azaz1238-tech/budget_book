@@ -1102,12 +1102,492 @@ def test_api_flt_n07_unfiltered_summary_unchanged(client, filter_data):
     }
 
 
+# v0.9부터 type만 보내는 요청은 유형 필터로 정상 동작한다 (API-SRCH-N02).
 @pytest.mark.parametrize("path", ["/api/transactions", "/api/summary"])
 @pytest.mark.parametrize("extra", [
-    pytest.param({"type": "expense"}, id="type-only"),
     pytest.param({"category": "식비"}, id="category-only"),
     pytest.param({"type": "expense", "category": ""}, id="empty-category"),
     pytest.param({"type": "transfer", "category": "식비"}, id="bad-type"),
 ])
 def test_api_flt_e01_e02_invalid_filter(client, path, extra):
     assert_error(client.get(path, params={"year": 2026, "month": 10, **extra}), 422, "INVALID_QUERY")
+
+
+# ---------------------------------------------------------------------------
+# 1.13 GET /api/summary/categories (v0.8)
+# ---------------------------------------------------------------------------
+
+def category_spending(client, year, month):
+    return assert_json(client.get("/api/summary/categories", params={"year": year, "month": month}), 200)
+
+
+def spending_rows(body):
+    return [(item["category"], item["amount"], item["count"]) for item in body["items"]]
+
+
+@pytest.fixture
+def spending_data(client):
+    add_category(client, "expense", "간식")
+    create(client, with_fields(date="2026-10-03", amount=550000, category="주거", memo="월세"))
+    create(client, T1)
+    create(client, with_fields(date="2026-10-15", amount=8000, memo=None))
+    create(client, with_fields(date="2026-10-20", amount=4500, category="간식", memo="커피"))
+    create(client, T2)
+    create(client, with_fields(date="2026-09-10", amount=7000, memo=None))
+
+
+def test_api_csum_n01_totals_by_category(client, spending_data):
+    body = category_spending(client, 2026, 10)
+    assert body["year"] == 2026 and body["month"] == 10
+    assert body["total"] == 575000
+    assert spending_rows(body) == [("주거", 550000, 1), ("식비", 20500, 2), ("간식", 4500, 1)]
+
+
+def test_api_csum_n02_income_excluded(client, spending_data):
+    assert "월급" not in [item["category"] for item in category_spending(client, 2026, 10)["items"]]
+
+
+def test_api_csum_n03_total_matches_summary(client, spending_data):
+    body = category_spending(client, 2026, 10)
+    assert sum(item["amount"] for item in body["items"]) == body["total"] == get_summary(client, 2026, 10)["expense"]
+
+
+def test_api_csum_n04_tie_sorted_by_name(client):
+    create(client, with_fields(date="2026-11-01", amount=1000, category="의료", memo=None))
+    create(client, with_fields(date="2026-11-02", amount=1000, category="교통", memo=None))
+    assert [item["category"] for item in category_spending(client, 2026, 11)["items"]] == ["교통", "의료"]
+
+
+def test_api_csum_n05_other_month_excluded(client, spending_data):
+    assert spending_rows(category_spending(client, 2026, 9)) == [("식비", 7000, 1)]
+
+
+def test_api_csum_n06_empty_month(client, spending_data):
+    body = category_spending(client, 2026, 8)
+    assert body["total"] == 0
+    assert body["items"] == []
+
+
+def test_api_csum_n07_no_budget_fields(client, spending_data):
+    for item in category_spending(client, 2026, 10)["items"]:
+        assert item["budget"] is None
+        assert item["remaining"] is None
+
+
+@pytest.mark.parametrize("params", [{"month": 10}, {"year": 2026}, {"year": 2026, "month": 13}])
+def test_api_csum_e01_invalid_query(client, params):
+    assert_error(client.get("/api/summary/categories", params=params), 422, "INVALID_QUERY")
+
+
+def test_api_csum_e02_db_error(client, broken_db):
+    assert_error(client.get("/api/summary/categories", params={"year": 2026, "month": 10}),
+                 500, "DATABASE_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# 1.14 검색·필터 쿼리 (v0.9)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def search_data(client, filter_data):
+    create(client, with_fields(date="2026-10-16", amount=9000, memo="팀 점심"))
+    create(client, with_fields(date="2026-10-17", amount=3500, category="기타", memo="Coffee"))
+    create(client, with_fields(date="2026-10-18", amount=20000, category="쇼핑", memo="50%_할인"))
+    create(client, with_fields(date="2026-10-19", amount=1000, category="쇼핑", memo="500원 할인"))
+    return filter_data
+
+
+def search(client, path="/api/transactions", **params):
+    return assert_json(client.get(path, params={"year": 2026, "month": 10, **params}), 200)
+
+
+def memos(rows):
+    return sorted(t["memo"] for t in rows if t["memo"] is not None)
+
+
+def test_api_srch_n01_keyword(client, search_data):
+    assert memos(search(client, q="점심")) == ["점심", "팀 점심"]
+
+
+def test_api_srch_n02_type_only(client, search_data):
+    rows = search(client, type="income")
+    assert rows and all(t["type"] == "income" for t in rows)
+    assert len(rows) == len([t for t in list_month(client, 2026, 10) if t["type"] == "income"])
+
+
+def test_api_srch_n03_combined(client, search_data):
+    assert memos(search(client, type="expense", category="식비", q="팀")) == ["팀 점심"]
+
+
+def test_api_srch_n04_case_insensitive(client, search_data):
+    assert "Coffee" in memos(search(client, q="coffee"))
+
+
+def test_api_srch_n05_special_characters(client, search_data):
+    assert memos(search(client, q="50%_")) == ["50%_할인"]
+
+
+def test_api_srch_n06_keyword_trimmed(client, search_data):
+    assert memos(search(client, q="  점심  ")) == ["점심", "팀 점심"]
+
+
+@pytest.mark.parametrize("q", ["", "   "])
+def test_api_srch_n07_blank_keyword_ignored(client, search_data, q):
+    assert search(client, q=q) == list_month(client, 2026, 10)
+
+
+def test_api_srch_n08_null_memo_excluded(client, search_data):
+    assert all(t["memo"] is not None for t in search(client, q="점"))
+
+
+def test_api_srch_n09_summary_with_filters(client, search_data):
+    body = search(client, path="/api/summary", type="expense", category="식비", q="팀")
+    assert body["income"] == 0 and body["expense"] == 9000
+
+
+def test_api_srch_n10_existing_calls_unchanged(client, search_data):
+    rows = list_month(client, 2026, 10)
+    assert search(client) == rows
+    assert len(rows) == 10
+
+
+def test_api_srch_n11_keyword_max_length(client):
+    assert search(client, q="가" * 50) == []
+
+
+@pytest.mark.parametrize("path", ["/api/transactions", "/api/summary"])
+@pytest.mark.parametrize("params", [
+    pytest.param({"q": "가" * 51}, id="long-keyword"),
+    pytest.param({"q": "  " + "가" * 51 + "  "}, id="long-keyword-trimmed"),
+    pytest.param({"category": "식비"}, id="category-only"),
+    pytest.param({"type": "transfer"}, id="bad-type"),
+])
+def test_api_srch_e01_e03_invalid(client, path, params):
+    assert_error(client.get(path, params={"year": 2026, "month": 10, **params}), 422, "INVALID_QUERY")
+
+
+# ---------------------------------------------------------------------------
+# 1.15 예산 (v0.10)
+# ---------------------------------------------------------------------------
+
+def put_budget(client, category_id, amount):
+    return client.put(f"/api/budgets/{category_id}", json={"amount": amount})
+
+
+def get_budgets(client):
+    return assert_json(client.get("/api/budgets"), 200)
+
+
+def spending_item(client, year, month, name):
+    return next((i for i in category_spending(client, year, month)["items"] if i["category"] == name), None)
+
+
+def test_api_bud_n01_set_budget(client):
+    food = find_category(client, "expense", "식비")
+    body = assert_json(put_budget(client, food["id"], 300000), 200)
+    assert body == {"category_id": food["id"], "category": "식비", "amount": 300000}
+    assert get_budgets(client) == [body]
+
+
+def test_api_bud_n02_update_budget(client):
+    food = find_category(client, "expense", "식비")
+    put_budget(client, food["id"], 300000)
+    assert assert_json(put_budget(client, food["id"], 250000), 200)["amount"] == 250000
+    assert [b["amount"] for b in get_budgets(client)] == [250000]
+
+
+def test_api_bud_n03_user_category(client):
+    snack = add_category(client, "expense", "간식")
+    assert assert_json(put_budget(client, snack["id"], 50000), 200)["category"] == "간식"
+
+
+def test_api_bud_n04_spending_with_budget(client, spending_data):
+    put_budget(client, find_category(client, "expense", "식비")["id"], 300000)
+    item = spending_item(client, 2026, 10, "식비")
+    assert item["budget"] == 300000 and item["remaining"] == 279500
+
+
+def test_api_bud_n05_over_budget(client, spending_data):
+    put_budget(client, find_category(client, "expense", "식비")["id"], 10000)
+    assert spending_item(client, 2026, 10, "식비")["remaining"] == -10500
+
+
+def test_api_bud_n06_budget_without_spending(client, spending_data):
+    put_budget(client, find_category(client, "expense", "의료")["id"], 50000)
+    body = category_spending(client, 2026, 10)
+    item = next(i for i in body["items"] if i["category"] == "의료")
+    assert (item["amount"], item["count"], item["budget"], item["remaining"]) == (0, 0, 50000, 50000)
+    assert body["total"] == 575000
+    assert body["items"][-1]["category"] == "의료"
+
+
+def test_api_bud_n07_same_budget_every_month(client, spending_data):
+    put_budget(client, find_category(client, "expense", "식비")["id"], 300000)
+    assert spending_item(client, 2026, 9, "식비")["remaining"] == 293000
+    assert spending_item(client, 2026, 11, "식비")["remaining"] == 300000
+
+
+def test_api_bud_n08_kept_after_rename(client):
+    snack = add_category(client, "expense", "간식")
+    put_budget(client, snack["id"], 50000)
+    client.put(f"/api/categories/{snack['id']}", json={"name": "디저트"})
+    assert get_budgets(client) == [{"category_id": snack["id"], "category": "디저트", "amount": 50000}]
+
+
+def test_api_bud_n09_removed_with_category(client):
+    snack = add_category(client, "expense", "간식")
+    put_budget(client, snack["id"], 50000)
+    assert client.delete(f"/api/categories/{snack['id']}").status_code == 204
+    assert get_budgets(client) == []
+
+
+def test_api_bud_n10_delete_budget(client, spending_data):
+    food = find_category(client, "expense", "식비")
+    put_budget(client, food["id"], 300000)
+    res = client.delete(f"/api/budgets/{food['id']}")
+    assert res.status_code == 204 and res.content == b""
+    assert get_budgets(client) == []
+    assert spending_item(client, 2026, 10, "식비")["budget"] is None
+
+
+def test_api_bud_e01_income_category(client):
+    salary = find_category(client, "income", "월급")
+    assert_error(put_budget(client, salary["id"], 100000), 422, "INVALID_BUDGET_CATEGORY")
+    assert get_budgets(client) == []
+
+
+@pytest.mark.parametrize("body, code", [
+    pytest.param({"amount": 0}, "INVALID_AMOUNT", id="zero"),
+    pytest.param({"amount": 12.5}, "INVALID_AMOUNT", id="float"),
+    pytest.param({"amount": "1000"}, "INVALID_AMOUNT", id="string"),
+    pytest.param({"amount": MAX_AMOUNT + 1}, "INVALID_AMOUNT", id="over-max"),
+    pytest.param({}, "MISSING_FIELD", id="missing"),
+])
+def test_api_bud_e02_invalid_amount(client, body, code):
+    food = find_category(client, "expense", "식비")
+    assert_error(client.put(f"/api/budgets/{food['id']}", json=body), 422, code)
+    assert get_budgets(client) == []
+
+
+def test_api_bud_e03_unknown_category(client):
+    assert_error(put_budget(client, 9999, 1000), 404, "CATEGORY_NOT_FOUND")
+
+
+def test_api_bud_e04_delete_without_budget(client):
+    food = find_category(client, "expense", "식비")
+    assert_error(client.delete(f"/api/budgets/{food['id']}"), 404, "BUDGET_NOT_FOUND")
+    assert_error(client.delete("/api/budgets/9999"), 404, "BUDGET_NOT_FOUND")
+
+
+@pytest.mark.parametrize("bad_id", ["abc", "0", "-1"])
+def test_api_bud_e05_invalid_id(client, bad_id):
+    assert_error(put_budget(client, bad_id, 1000), 422, "INVALID_ID")
+    assert_error(client.delete(f"/api/budgets/{bad_id}"), 422, "INVALID_ID")
+
+
+def test_api_bud_e06_db_error(client, broken_db):
+    assert_error(put_budget(client, 1, 1000), 500, "DATABASE_ERROR")
+    assert_error(client.get("/api/budgets"), 500, "DATABASE_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# 1.16 고정 거래 (v0.11)
+# ---------------------------------------------------------------------------
+
+RECURRING_FIELDS = {"id", "day", "type", "amount", "category_id", "category", "memo", "applied"}
+
+
+@pytest.fixture
+def recurring_ids(client):
+    return {
+        "housing": find_category(client, "expense", "주거")["id"],
+        "salary": find_category(client, "income", "월급")["id"],
+    }
+
+
+def r_body(ids, which):
+    bodies = {
+        "R1": {"day": 1, "type": "expense", "amount": 550000, "category_id": ids["housing"], "memo": "월세"},
+        "R2": {"day": 25, "type": "income", "amount": 3000000, "category_id": ids["salary"]},
+        "R3": {"day": 31, "type": "expense", "amount": 120000, "category_id": ids["housing"], "memo": "관리비"},
+    }
+    return dict(bodies[which])
+
+
+def add_recurring(client, body):
+    return assert_json(client.post("/api/recurring", json=body), 201)
+
+
+def list_recurring(client, **params):
+    return assert_json(client.get("/api/recurring", params=params), 200)
+
+
+def apply_recurring(client, year, month):
+    return assert_json(client.post("/api/recurring/apply", json={"year": year, "month": month}), 200)
+
+
+@pytest.fixture
+def three(client, recurring_ids):
+    return [add_recurring(client, r_body(recurring_ids, k)) for k in ("R1", "R2", "R3")]
+
+
+def count_applied(db_path):
+    conn = REAL_CONNECT(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM recurring_applied").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_api_rec_n01_add(client, recurring_ids):
+    created = add_recurring(client, r_body(recurring_ids, "R1"))
+    assert set(created) == RECURRING_FIELDS
+    assert created["category"] == "주거" and created["memo"] == "월세" and created["applied"] is None
+
+
+def test_api_rec_n02_sorted_by_day(client, recurring_ids):
+    for key in ("R2", "R1", "R3"):
+        add_recurring(client, r_body(recurring_ids, key))
+    assert [r["day"] for r in list_recurring(client)] == [1, 25, 31]
+
+
+def test_api_rec_n03_update_keeps_applied_transactions(client, db_path, three):
+    created = apply_recurring(client, 2026, 10)["created"]
+    r1_tx = next(t for t in created if t["memo"] == "월세")
+    body = {k: three[0][k] for k in ("day", "type", "category_id", "memo")} | {"amount": 600000}
+    assert assert_json(client.put(f"/api/recurring/{three[0]['id']}", json=body), 200)["amount"] == 600000
+    assert get_row(db_path, r1_tx["id"])["amount"] == 550000
+
+
+def test_api_rec_n04_delete_keeps_transactions(client, db_path, three):
+    created = apply_recurring(client, 2026, 10)["created"]
+    res = client.delete(f"/api/recurring/{three[0]['id']}")
+    assert res.status_code == 204
+    assert [r["id"] for r in list_recurring(client)] == [three[1]["id"], three[2]["id"]]
+    assert all(get_row(db_path, t["id"]) is not None for t in created)
+    assert count_applied(db_path) == 2
+
+
+def test_api_rec_n05_apply(client, three):
+    body = apply_recurring(client, 2026, 10)
+    assert (body["year"], body["month"], body["skipped"]) == (2026, 10, 0)
+    assert sorted(t["date"] for t in body["created"]) == ["2026-10-01", "2026-10-25", "2026-10-31"]
+    assert set(body["created"][0]) == TRANSACTION_FIELDS
+    listed = {t["id"] for t in list_month(client, 2026, 10)}
+    assert {t["id"] for t in body["created"]} <= listed
+    assert get_summary(client, 2026, 10)["expense"] == 670000
+
+
+def test_api_rec_n06_apply_twice(client, db_path, three):
+    apply_recurring(client, 2026, 10)
+    before = count_rows(db_path)
+    body = apply_recurring(client, 2026, 10)
+    assert body["created"] == [] and body["skipped"] == 3
+    assert count_rows(db_path) == before
+
+
+def test_api_rec_n07_deleted_transaction_not_recreated(client, three):
+    created = apply_recurring(client, 2026, 10)["created"]
+    r1_tx = next(t for t in created if t["memo"] == "월세")
+    client.delete(f"/api/transactions/{r1_tx['id']}")
+    assert apply_recurring(client, 2026, 10)["created"] == []
+    assert "월세" not in [t["memo"] for t in list_month(client, 2026, 10)]
+
+
+@pytest.mark.parametrize("year, month, expected", [
+    (2026, 2, "2026-02-28"), (2028, 2, "2028-02-29"), (2026, 4, "2026-04-30"),
+])
+def test_api_rec_n08_last_day(client, three, year, month, expected):
+    created = apply_recurring(client, year, month)["created"]
+    assert next(t for t in created if t["memo"] == "관리비")["date"] == expected
+
+
+def test_api_rec_n09_applied_flag(client, three):
+    apply_recurring(client, 2026, 10)
+    assert [r["applied"] for r in list_recurring(client, year=2026, month=10)] == [True, True, True]
+    assert [r["applied"] for r in list_recurring(client, year=2026, month=11)] == [False, False, False]
+    assert [r["applied"] for r in list_recurring(client)] == [None, None, None]
+
+
+def test_api_rec_n10_only_new_templates(client, three):
+    apply_recurring(client, 2026, 10)
+    culture = find_category(client, "expense", "문화·여가")
+    add_recurring(client, {"day": 5, "type": "expense", "amount": 15000, "category_id": culture["id"], "memo": "구독"})
+    body = apply_recurring(client, 2026, 10)
+    assert [t["memo"] for t in body["created"]] == ["구독"] and body["skipped"] == 3
+
+
+def test_api_rec_n11_follows_category_rename(client):
+    snack = add_category(client, "expense", "간식")
+    add_recurring(client, {"day": 3, "type": "expense", "amount": 9000, "category_id": snack["id"]})
+    client.put(f"/api/categories/{snack['id']}", json={"name": "디저트"})
+    assert list_recurring(client)[0]["category"] == "디저트"
+    assert apply_recurring(client, 2026, 10)["created"][0]["category"] == "디저트"
+
+
+@pytest.mark.parametrize("day, code", [
+    pytest.param(0, "INVALID_DAY", id="zero"),
+    pytest.param(32, "INVALID_DAY", id="32"),
+    pytest.param(1.5, "INVALID_DAY", id="float"),
+    pytest.param("1", "INVALID_DAY", id="string"),
+    pytest.param(None, "MISSING_FIELD", id="null"),
+])
+def test_api_rec_e01_invalid_day(client, recurring_ids, day, code):
+    body = r_body(recurring_ids, "R1") | {"day": day}
+    assert_error(client.post("/api/recurring", json=body), 422, code)
+    assert list_recurring(client) == []
+
+
+def test_api_rec_e02_invalid_category(client, recurring_ids):
+    assert_error(client.post("/api/recurring", json=r_body(recurring_ids, "R1") | {"category_id": 9999}),
+                 422, "INVALID_CATEGORY")
+    mismatch = r_body(recurring_ids, "R1") | {"category_id": recurring_ids["salary"]}
+    error = assert_error(client.post("/api/recurring", json=mismatch), 422, "INVALID_CATEGORY")
+    assert "월급" in error["message"]
+
+
+@pytest.mark.parametrize("change, code", [
+    pytest.param({"amount": 0}, "INVALID_AMOUNT", id="amount"),
+    pytest.param({"type": "transfer"}, "INVALID_TYPE", id="type"),
+    pytest.param({"memo": 123}, "INVALID_MEMO", id="memo"),
+])
+def test_api_rec_e03_transaction_rules(client, recurring_ids, change, code):
+    assert_error(client.post("/api/recurring", json=r_body(recurring_ids, "R1") | change), 422, code)
+
+
+def test_api_rec_e04_not_found(client, recurring_ids):
+    assert_error(client.put("/api/recurring/9999", json=r_body(recurring_ids, "R1")), 404, "RECURRING_NOT_FOUND")
+    assert_error(client.delete("/api/recurring/9999"), 404, "RECURRING_NOT_FOUND")
+
+
+@pytest.mark.parametrize("body", [{"year": 2026, "month": 13}, {"month": 10}, {"year": 0, "month": 1}])
+def test_api_rec_e05_apply_invalid_month(client, three, body):
+    assert_error(client.post("/api/recurring/apply", json=body), 422, "INVALID_QUERY")
+
+
+def test_api_rec_e05b_list_needs_year_and_month(client):
+    assert_error(client.get("/api/recurring", params={"year": 2026}), 422, "INVALID_QUERY")
+
+
+def test_api_rec_e06_category_in_use_by_recurring(client):
+    snack = add_category(client, "expense", "간식")
+    add_recurring(client, {"day": 3, "type": "expense", "amount": 9000, "category_id": snack["id"]})
+    error = assert_error(client.delete(f"/api/categories/{snack['id']}"), 409, "CATEGORY_IN_USE")
+    assert "고정 거래 1건" in error["message"]
+
+
+def test_api_rec_e07_apply_rolls_back(client, db_path, three):
+    conn = REAL_CONNECT(db_path)
+    try:
+        conn.execute(
+            "CREATE TRIGGER fail_second_insert BEFORE INSERT ON transactions "
+            "WHEN (SELECT COUNT(*) FROM recurring_applied) >= 1 "
+            "BEGIN SELECT RAISE(ABORT, 'forced failure'); END"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    before = count_rows(db_path)
+    assert_error(client.post("/api/recurring/apply", json={"year": 2026, "month": 10}), 500, "DATABASE_ERROR")
+    assert count_rows(db_path) == before
+    assert count_applied(db_path) == 0
