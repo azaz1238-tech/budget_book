@@ -13,8 +13,11 @@
 
 ## 폴더 구조
 
+- app/        : FastAPI 서버 (main.py, db.py, schemas.py, categories.py)
+- static/     : 화면 (index.html, app.js, style.css)
+- tests/      : pytest 테스트
 - docs/       : 프로젝트 아이디어와 기능 명세
-- 애플리케이션 소스 폴더와 세부 구조는 구현 시 프로젝트 구성에 맞춰 정한다.
+- 세부 구조는 docs/TRD.md 3절을 따른다.
 
 ## 반드시 참고할 문서
 
