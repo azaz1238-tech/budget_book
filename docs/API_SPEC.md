@@ -1,7 +1,7 @@
 # API 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/DATA_MODEL.md` (보조: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절), v0.6 분류 필터(3.2·3.6절 쿼리)
 
 ## 1. 공통 규칙
 
@@ -156,6 +156,11 @@ GET /api/categories
 |---|---|---|
 | `year` | O | 정수, 1 ~ 9999 |
 | `month` | O | 정수, 1 ~ 12 |
+| `type` | X | (v0.6 분류 필터) `income` 또는 `expense`. `category`와 함께 보내야 함 |
+| `category` | X | (v0.6 분류 필터) 분류 이름. `type`과 함께 보내야 함 |
+
+- `type`과 `category`를 보내면 그 유형·분류의 거래만 돌려준다. 정렬은 같다. 없는 분류 이름이면 빈 배열이다.
+- 예: `GET /api/transactions?year=2026&month=10&type=expense&category=식비`
 
 **요청**
 
@@ -203,6 +208,8 @@ GET /api/transactions?year=2026&month=10
 | `year` 또는 `month` 없음 | 422 | `INVALID_QUERY` | `조회할 연도와 월을 입력해 주세요.` |
 | `month`가 13, `1.5` 등 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
 | `year`가 0, `abc` 등 | 422 | `INVALID_QUERY` | `연도는 1부터 9999 사이여야 합니다.` |
+| (v0.6) `type`·`category` 중 하나만 있음 (빈 문자열 포함) | 422 | `INVALID_QUERY` | `분류 필터는 유형과 분류를 함께 지정해야 합니다.` |
+| (v0.6) `type`이 `income`·`expense`가 아님 | 422 | `INVALID_QUERY` | `분류 필터의 유형이 올바르지 않습니다.` |
 | DB 읽기 실패 | 500 | `DATABASE_ERROR` | `거래 내역을 불러오지 못했습니다.` |
 
 ---
@@ -369,7 +376,9 @@ DELETE /api/transactions/7
 
 **쿼리 파라미터**
 
-`GET /api/transactions`와 같다. (`year` 1 ~ 9999, `month` 1 ~ 12, 모두 필수)
+`GET /api/transactions`와 같다. (`year` 1 ~ 9999, `month` 1 ~ 12, 모두 필수 / v0.6: 선택 `type`·`category`)
+
+- (v0.6) `type`과 `category`를 보내면 그 분류의 거래만으로 합계를 계산한다. 예: 지출 `식비`로 거르면 `income`은 0, `balance`는 `-expense`다.
 
 **요청**
 
@@ -411,6 +420,7 @@ GET /api/summary?year=2026&month=10
 | `year` 또는 `month` 없음 | 422 | `INVALID_QUERY` | `조회할 연도와 월을 입력해 주세요.` |
 | `month`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
 | `year`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `연도는 1부터 9999 사이여야 합니다.` |
+| (v0.6) 분류 필터 오류 | 422 | `INVALID_QUERY` | `GET /api/transactions`와 같음 |
 | DB 읽기 실패 | 500 | `DATABASE_ERROR` | `월별 요약을 불러오지 못했습니다.` |
 
 ---

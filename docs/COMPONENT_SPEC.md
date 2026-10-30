@@ -1,7 +1,7 @@
 # 컴포넌트 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md`, `docs/API_SPEC.md` (보조: `docs/DATA_MODEL.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(4.8 ~ 4.9절), v0.5 백업(4.10절)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(4.8 ~ 4.9절), v0.5 백업(4.10절), v0.6 분류 필터(4.5절)
 
 ## 1. 개요
 
@@ -69,6 +69,8 @@ type AsyncState<T> =
 | `renamingCategoryId` | `number \| null` | `null` (v0.4, 이름 수정 중인 분류) |
 | `categoryResetKey` | `number` | `0` (v0.4, 분류 추가 성공 시 1 증가 → 추가 입력칸 비움) |
 | `backingUp` | `boolean` | `false` (v0.5, 백업 요청 중) |
+| `filter` | `{ type: TransactionType; category: string } \| null` | `null` (v0.6, `null`이면 전체) |
+| `filterSummary` | `AsyncState<MonthlySummary> \| null` | `null` (v0.6, 필터가 있을 때만 그 분류의 합계) |
 
 **하는 일**
 
@@ -181,10 +183,26 @@ type TransactionListProps = {
   onEdit: (transaction: Transaction) => void;
   onDelete: (transaction: Transaction) => void;
   onRetry: () => void;
+  // v0.6 분류 필터
+  categories: AsyncState<Categories>;
+  filter: { type: TransactionType; category: string } | null;
+  filterSummary: AsyncState<MonthlySummary> | null;
+  onFilterChange: (filter: { type: TransactionType; category: string } | null) => void;
 };
 ```
 
 - 서버가 정렬해서 준 순서(거래일 → 등록 시각 → ID 내림차순) 그대로 표시한다.
+- (v0.6) 제목 아래에 `분류 필터` 선택 상자를 둔다: `전체 분류`, `지출` 묶음(지출 분류들), `수입` 묶음(수입 분류들). 분류를 아직 못 불러왔으면 `전체 분류`만 있다.
+- (v0.6) 필터가 있으면 선택 상자 아래에 `식비(지출) · 3건 · 합계 62,500원` 한 줄을 보여 준다. 건수는 목록의 거래 수, 합계는 `filterSummary`의 해당 유형 합계다. 합계를 불러오는 중이면 `합계 계산 중...`, 실패하면 에러 문구를 보여 준다.
+
+| 사용자 동작 (v0.6) | 결과 |
+|---|---|
+| 필터에서 분류 선택 | `onFilterChange` → 그 분류의 목록과 합계를 다시 조회 |
+| 필터를 `전체 분류`로 변경 | 필터 해제 → 전체 목록 다시 조회, 건수·합계 줄 숨김 |
+| 필터 상태에서 월 변경 | 필터 유지, 새 달의 그 분류 목록과 합계 조회 |
+| 필터 상태에서 거래 등록·수정·삭제 성공 | 목록과 합계 다시 조회 |
+| 필터의 분류 이름을 분류 관리에서 수정 | 필터가 새 이름으로 바뀌고 목록·합계 다시 조회 |
+| 분류 목록을 다시 불러왔는데 필터의 분류가 없음 | 필터를 `전체 분류`로 되돌리고 목록 다시 조회 |
 
 | 사용자 동작 | 결과 |
 |---|---|
@@ -328,6 +346,7 @@ type BackupButtonProps = {
 | 위치 | 문구 |
 |---|---|
 | `TransactionList` | `2026년 10월에는 거래 내역이 없습니다.` (연·월은 `selected` 값) |
+| (v0.6) `TransactionList` 필터 적용 | `2026년 10월에는 '식비'(지출) 거래가 없습니다.` |
 
 ### 5.3 에러
 
