@@ -48,6 +48,37 @@ function el(tag, attrs = {}, children = []) {
 // API 호출 (docs/API_SPEC.md)
 // ---------------------------------------------------------------------------
 
+function unknownError(status) {
+  return { status, code: "UNKNOWN_ERROR", message: `알 수 없는 오류가 발생했습니다. (상태 코드: ${status})` };
+}
+
+/** 실패 응답을 { status, code, message }로 바꾼다. 에러 형식이 아니면 알 수 없는 오류로 본다. */
+async function toApiError(res) {
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  const error = data && data.error;
+  if (error && typeof error.code === "string" && typeof error.message === "string") {
+    return { status: res.status, code: error.code, message: error.message };
+  }
+  return unknownError(res.status);
+}
+
+/** fetch 후 실패 응답이나 연결 실패를 에러로 던진다. */
+async function fetchOrThrow(url, options) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch {
+    throw CONNECTION_ERROR;
+  }
+  if (!res.ok) throw await toApiError(res);
+  return res;
+}
+
 async function request(method, url, body) {
   const options = { method };
   if (body !== undefined) {
@@ -55,33 +86,41 @@ async function request(method, url, body) {
     options.body = JSON.stringify(body);
   }
 
-  let res;
+  const res = await fetchOrThrow(url, options);
+  if (res.status === 204) return null;
   try {
-    res = await fetch(url, options);
+    return await res.json();
+  } catch {
+    throw unknownError(res.status);
+  }
+}
+
+function fallbackBackupFilename() {
+  const d = new Date();
+  const date = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return `budget-backup-${date}-${pad2(d.getHours())}${pad2(d.getMinutes())}.db`;
+}
+
+/** 백업 파일을 받아 { blob, filename }으로 돌려준다. 파일 이름은 응답 헤더를 따른다. */
+async function requestBackup() {
+  const res = await fetchOrThrow("/api/backup", { method: "GET" });
+  const match = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "");
+  let blob;
+  try {
+    blob = await res.blob();
   } catch {
     throw CONNECTION_ERROR;
   }
-  if (res.status === 204) return null;
+  return { blob, filename: match ? match[1] : fallbackBackupFilename() };
+}
 
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
-
-  const error = data && data.error;
-  if (!res.ok && error && typeof error.code === "string" && typeof error.message === "string") {
-    throw { status: res.status, code: error.code, message: error.message };
-  }
-  if (!res.ok || data === null) {
-    throw {
-      status: res.status,
-      code: "UNKNOWN_ERROR",
-      message: `알 수 없는 오류가 발생했습니다. (상태 코드: ${res.status})`,
-    };
-  }
-  return data;
+function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = el("a", { href: url, download: filename });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 const api = {
@@ -94,6 +133,7 @@ const api = {
   createCategory: (input) => request("POST", "/api/categories", input),
   renameCategory: (id, name) => request("PUT", `/api/categories/${id}`, { name }),
   deleteCategory: (id) => request("DELETE", `/api/categories/${id}`),
+  downloadBackup: requestBackup,
 };
 
 // ---------------------------------------------------------------------------
@@ -105,6 +145,22 @@ function StatusMessage({ kind, message, onRetry }) {
     el("p", { text: message }),
     onRetry ? el("button", { type: "button", className: "button-secondary", text: "다시 시도", onClick: onRetry }) : null,
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// BackupButton (v0.5)
+// ---------------------------------------------------------------------------
+
+function renderBackupButton(container, { busy, onBackup }) {
+  container.replaceChildren(
+    el("button", {
+      type: "button",
+      className: "button-secondary backup-button",
+      text: busy ? "백업 중..." : "백업 다운로드",
+      disabled: busy,
+      onClick: onBackup,
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +522,7 @@ function CategoryItem({ category, isRenaming, renameDraft, busy, onStartRename, 
 // ---------------------------------------------------------------------------
 
 const dom = {
+  backup: document.getElementById("backup-button"),
   month: document.getElementById("month-selector"),
   summary: document.getElementById("summary-panel"),
   form: document.getElementById("transaction-form"),
@@ -487,10 +544,15 @@ const state = {
   categoryError: null,
   renamingCategoryId: null,
   categoryResetKey: 0,
+  backingUp: false,
 };
 
 // 응답이 늦게 도착해 최신 상태를 덮어쓰지 않도록 요청마다 번호를 붙인다.
 const latestRequest = { categories: 0, transactions: 0, summary: 0 };
+
+function renderBackup() {
+  renderBackupButton(dom.backup, { busy: state.backingUp, onBackup: handleBackup });
+}
 
 function renderMonth() {
   renderMonthSelector(dom.month, { value: state.selected, disabled: state.submitting, onChange: handleMonthChange });
@@ -729,6 +791,24 @@ function handleDeleteCategory(category) {
   });
 }
 
+// --- 백업 (v0.5) ---
+
+async function handleBackup() {
+  if (state.backingUp) return;
+  state.backingUp = true;
+  renderBackup();
+  try {
+    const { blob, filename } = await api.downloadBackup();
+    saveBlob(blob, filename);
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    state.backingUp = false;
+    renderBackup();
+  }
+}
+
+renderBackup();
 renderMonth();
 renderForm();
 renderCategories();

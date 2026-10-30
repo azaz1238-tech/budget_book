@@ -43,6 +43,18 @@ h1 {
   font-size: 1.5rem;
 }
 
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.backup-button {
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
 h2 {
   margin: 0 0 12px;
   font-size: 1.1rem;
