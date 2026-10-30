@@ -46,7 +46,7 @@
 | API-COM-N03 | 데이터 유지 | T1 등록 후, 같은 DB 파일로 앱을 새로 만들어 목록 조회 | T1이 그대로 조회됨 (서버 재실행 후에도 유지) |
 | API-COM-N04 | 응답 형식 | 본문이 있는 모든 성공 응답 | `Content-Type`이 `application/json` |
 | API-COM-E01 | 없는 경로 | `GET /api/unknown` | 404, `NOT_FOUND` |
-| API-COM-E02 | 지원하지 않는 메서드 | `PATCH /api/transactions/1` | 405, `METHOD_NOT_ALLOWED` |
+| API-COM-E02 | 지원하지 않는 메서드 | `PATCH /api/transactions/1`, `GET /api/transactions/1` | 각각 405, `METHOD_NOT_ALLOWED` |
 | API-COM-E03 | 에러 형식 | 이 문서의 모든 에러 케이스 응답 | 본문이 `{ "error": { "code", "message" } }` 형식이고 `detail` 필드가 없음 |
 | API-COM-E04 | 500 메시지 | `DATABASE_ERROR` 응답 | `message`에 SQL, 파일 경로, 예외 이름이 들어 있지 않음 |
 
@@ -122,7 +122,7 @@
 | API-PUT-N04 | 다른 달로 이동 | T1의 `date`를 `2026-11-02`로 수정 후 10월·11월 목록과 요약 조회 | 10월 목록에서 빠지고 11월 목록에 나타남. 10월 `expense`는 12500 감소, 11월 `expense`는 12500 증가 |
 | API-PUT-N05 | 서버 필드 무시 | 본문에 `"id": 999`, `"created_at": "2000-01-01T00:00:00"` 포함 | 200, `id`와 `created_at`이 수정 전과 같음 |
 | API-PUT-N06 | 정렬 유지 | T1, T2 순서로 등록 후 T1 수정 | 같은 날짜에서 여전히 T2가 T1보다 먼저 (수정해도 `created_at`이 바뀌지 않음) |
-| API-PUT-E01 | id 형식 | `id`가 `abc`, `0`, `-1` | 각각 422, `INVALID_ID` |
+| API-PUT-E01 | id 형식 | `id`가 `abc`, `0`, `-1`, `9223372036854775808` | 각각 422, `INVALID_ID` |
 | API-PUT-E02 | 없는 id | 존재하지 않는 `id` 9999, 올바른 본문 | 404, `TRANSACTION_NOT_FOUND` |
 | API-PUT-E03 | 처리 순서 1 | 잘못된 `id`(`abc`) + 잘못된 본문(`amount` 0) | 422, `INVALID_ID` |
 | API-PUT-E04 | 처리 순서 2 | 없는 `id` 9999 + 잘못된 본문(`amount` 0) | 422, `INVALID_AMOUNT` (본문 검사가 존재 확인보다 먼저) |
@@ -138,7 +138,7 @@
 | API-DEL-N01 | 삭제 | T1 삭제 | 204, 응답 본문 없음. 목록에서 T1이 사라짐 |
 | API-DEL-N02 | 요약 반영 | T1 삭제 후 10월 요약 조회 | `expense`가 12500 감소 |
 | API-DEL-N03 | 다른 거래 유지 | T1~T3 중 T1 삭제 | T2, T3는 그대로 조회됨 |
-| API-DEL-E01 | id 형식 | `id`가 `abc`, `0`, `-1` | 각각 422, `INVALID_ID` |
+| API-DEL-E01 | id 형식 | `id`가 `abc`, `0`, `-1`, `9223372036854775808` | 각각 422, `INVALID_ID` |
 | API-DEL-E02 | 없는 id | 존재하지 않는 `id` 9999 | 404, `TRANSACTION_NOT_FOUND` |
 | API-DEL-E03 | 두 번 삭제 | T1을 삭제한 뒤 같은 `id`로 다시 삭제 | 두 번째 요청은 404, `TRANSACTION_NOT_FOUND` |
 | API-DEL-E04 | DB 오류 | DB 쓰기 실패 | 500, `DATABASE_ERROR`, T1이 그대로 남아 있음 |

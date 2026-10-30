@@ -187,8 +187,9 @@ def test_api_com_e01_unknown_path(client):
     assert_error(client.get("/api/unknown"), 404, "NOT_FOUND")
 
 
-def test_api_com_e02_method_not_allowed(client):
-    assert_error(client.patch("/api/transactions/1", json=T1), 405, "METHOD_NOT_ALLOWED")
+@pytest.mark.parametrize("method", ["PATCH", "GET"])
+def test_api_com_e02_method_not_allowed(client, method):
+    assert_error(client.request(method, "/api/transactions/1"), 405, "METHOD_NOT_ALLOWED")
 
 
 def test_api_com_e04_500_message_hides_internals(client, db_path, broken_db):
@@ -448,7 +449,7 @@ def test_api_put_n06_sort_kept_after_update(client, t1):
     assert [t["id"] for t in list_month(client, 2026, 10)] == [t2["id"], t1["id"]]
 
 
-@pytest.mark.parametrize("bad_id", ["abc", "0", "-1"])
+@pytest.mark.parametrize("bad_id", ["abc", "0", "-1", "9223372036854775808"])
 def test_api_put_e01_invalid_id(client, db_path, t1, bad_id):
     before = get_row(db_path, t1["id"])
     assert_error(put(client, bad_id, with_fields(amount=15000)), 422, "INVALID_ID")
@@ -512,7 +513,7 @@ def test_api_del_n03_other_transactions_kept(client, t1):
     assert [t["id"] for t in list_month(client, 2026, 10)] == [t2["id"], t3["id"]]
 
 
-@pytest.mark.parametrize("bad_id", ["abc", "0", "-1"])
+@pytest.mark.parametrize("bad_id", ["abc", "0", "-1", "9223372036854775808"])
 def test_api_del_e01_invalid_id(client, bad_id):
     assert_error(client.delete(f"/api/transactions/{bad_id}"), 422, "INVALID_ID")
 

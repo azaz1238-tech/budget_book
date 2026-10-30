@@ -19,7 +19,7 @@
 | `id` | `INTEGER` | `PRIMARY KEY AUTOINCREMENT` | 거래 내역 식별자. 서버가 자동 부여한다. |
 | `date` | `TEXT` | `NOT NULL`, `YYYY-MM-DD` 형식 | 거래가 발생한 날짜. 예: `2026-10-30` |
 | `type` | `TEXT` | `NOT NULL`, `CHECK (type IN ('income', 'expense'))` | 거래 유형. `income`=수입, `expense`=지출 |
-| `amount` | `INTEGER` | `NOT NULL`, `CHECK (amount >= 1)` | 원 단위 금액. 항상 양의 정수로 저장하고, 수입·지출 구분은 `type`으로 한다. |
+| `amount` | `INTEGER` | `NOT NULL`, `CHECK (amount >= 1)`, 9,007,199,254,740,991 이하 (서버 코드에서 검사) | 원 단위 금액. 항상 양의 정수로 저장하고, 수입·지출 구분은 `type`으로 한다. 최대값은 브라우저 JavaScript가 정확히 다룰 수 있는 가장 큰 정수다. |
 | `category` | `TEXT` | `NOT NULL`, `type`에 해당하는 고정 분류 중 하나 (서버 코드에서 검사) | 거래 분류 문자열. 예: `식비` |
 | `memo` | `TEXT` | `NULL` 허용 | 선택 메모. 빈 값은 `NULL`로 저장한다. |
 | `created_at` | `TEXT` | `NOT NULL`, ISO 8601 형식 | 서버가 등록 시 자동 기록하는 시각. 사용자가 입력·수정할 수 없다. 예: `2026-10-30T12:34:56.123456` |
@@ -73,7 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 | `expense` | 선택한 월의 `type = 'expense'`인 `amount` 합계, 없으면 0 |
 | `balance` | `income - expense` (음수 가능) |
 
-선택한 월의 범위는 `date >= 'YYYY-MM-01' AND date < '다음 달-01'`로 정한다.
+선택한 월의 범위는 `date BETWEEN 'YYYY-MM-01' AND 'YYYY-MM-말일'`로 정한다. 날짜를 `YYYY-MM-DD` 문자열로 저장하므로 문자열 비교로 정확히 걸러진다.
 
 ## 5. TypeScript 타입 예시
 
@@ -102,7 +102,7 @@ type TypedCategory =
 type Transaction = TypedCategory & {
   id: number;
   date: DateString;
-  amount: number;            // 1 이상의 정수 (원)
+  amount: number;            // 1 ~ 9,007,199,254,740,991 정수 (원)
   memo: string | null;
   created_at: DateTimeString; // 서버가 기록
 };
@@ -110,7 +110,7 @@ type Transaction = TypedCategory & {
 /** 등록·수정 요청 본문 (id, created_at은 보내지 않음) */
 type TransactionInput = TypedCategory & {
   date: DateString;
-  amount: number;            // 1 이상의 정수 (원)
+  amount: number;            // 1 ~ 9,007,199,254,740,991 정수 (원)
   memo?: string | null;
 };
 

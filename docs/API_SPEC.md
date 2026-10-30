@@ -52,10 +52,10 @@
 | `INVALID_CATEGORY` | 422 | `category`가 `type`에 해당하는 고정 분류가 아님 |
 | `INVALID_MEMO` | 422 | `memo`가 문자열이나 `null`이 아님 |
 | `INVALID_QUERY` | 422 | `year`, `month` 쿼리가 없거나 범위를 벗어남 |
-| `INVALID_ID` | 422 | 경로의 `id`가 1 이상의 정수가 아님 |
+| `INVALID_ID` | 422 | 경로의 `id`가 1 ~ 9,223,372,036,854,775,807(SQLite 정수 최대값) 범위의 정수가 아님 |
 | `TRANSACTION_NOT_FOUND` | 404 | 해당 `id`의 거래가 없음 |
 | `NOT_FOUND` | 404 | 존재하지 않는 API 경로 |
-| `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 지원하지 않는 메서드 |
+| `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 지원하지 않는 메서드 (예: `GET /api/transactions/1`, `POST /api/categories`) |
 | `DATABASE_ERROR` | 500 | `budget.db` 읽기·쓰기 실패 |
 | `INTERNAL_ERROR` | 500 | 그 밖의 예상하지 못한 서버 오류 |
 
@@ -175,7 +175,8 @@ GET /api/transactions?year=2026&month=10
 | 상황 | 상태 코드 | code | 응답 예시 `message` |
 |---|---|---|---|
 | `year` 또는 `month` 없음 | 422 | `INVALID_QUERY` | `조회할 연도와 월을 입력해 주세요.` |
-| `month`가 13, `year`가 `abc` 등 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
+| `month`가 13, `1.5` 등 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
+| `year`가 0, `abc` 등 | 422 | `INVALID_QUERY` | `연도는 1부터 9999 사이여야 합니다.` |
 | DB 읽기 실패 | 500 | `DATABASE_ERROR` | `거래 내역을 불러오지 못했습니다.` |
 
 ---
@@ -295,7 +296,7 @@ Content-Type: application/json
 
 | 상황 | 상태 코드 | code | 응답 예시 `message` |
 |---|---|---|---|
-| `id`가 `abc`, `0`, `-1` | 422 | `INVALID_ID` | `거래 ID가 올바르지 않습니다.` |
+| `id`가 `abc`, `0`, `-1`, `9223372036854775808` | 422 | `INVALID_ID` | `거래 ID가 올바르지 않습니다.` |
 | 해당 `id` 거래 없음 | 404 | `TRANSACTION_NOT_FOUND` | `이미 삭제되었거나 없는 내역입니다.` |
 | 본문 검증 실패 | 400 / 422 | `POST`와 동일 | `POST`와 동일 |
 | DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `거래 내역을 수정하지 못했습니다.` |
@@ -323,7 +324,7 @@ DELETE /api/transactions/7
 
 | 상황 | 상태 코드 | code | 응답 예시 `message` |
 |---|---|---|---|
-| `id`가 `abc`, `0`, `-1` | 422 | `INVALID_ID` | `거래 ID가 올바르지 않습니다.` |
+| `id`가 `abc`, `0`, `-1`, `9223372036854775808` | 422 | `INVALID_ID` | `거래 ID가 올바르지 않습니다.` |
 | 해당 `id` 거래 없음 | 404 | `TRANSACTION_NOT_FOUND` | `이미 삭제되었거나 없는 내역입니다.` |
 | DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `거래 내역을 삭제하지 못했습니다.` |
 
@@ -381,7 +382,9 @@ GET /api/summary?year=2026&month=10
 
 | 상황 | 상태 코드 | code | 응답 예시 `message` |
 |---|---|---|---|
-| `year` 또는 `month` 없음·범위 밖 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
+| `year` 또는 `month` 없음 | 422 | `INVALID_QUERY` | `조회할 연도와 월을 입력해 주세요.` |
+| `month`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
+| `year`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `연도는 1부터 9999 사이여야 합니다.` |
 | DB 읽기 실패 | 500 | `DATABASE_ERROR` | `월별 요약을 불러오지 못했습니다.` |
 
 ## 4. 구현 참고

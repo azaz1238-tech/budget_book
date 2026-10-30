@@ -60,6 +60,7 @@ type AsyncState<T> =
 | `submitting` | `boolean` | `false` |
 | `formError` | `ApiError \| null` | `null` |
 | `deletingId` | `number \| null` | `null` |
+| `formResetKey` | `number` | `0` (폼을 새로 채울 때마다 1 증가: 저장 성공, 수정 시작, 수정 취소, 수정 중인 거래 삭제) |
 
 **하는 일**
 
@@ -110,11 +111,14 @@ type TransactionFormProps = {
   editing: Transaction | null;             // null이면 등록 모드, 값이 있으면 수정 모드
   submitting: boolean;
   error: ApiError | null;                  // 클라이언트 검사 또는 서버 에러
+  resetKey: number;                        // 값이 바뀔 때만 입력값을 기본값 또는 editing 값으로 다시 채움
   onSubmit: (input: TransactionInput) => void;
   onCancelEdit: () => void;
   onRetryCategories: () => void;
 };
 ```
+
+- 입력 중인 값은 폼이 직접 가지고 있다. 목록·요약을 다시 불러와도 `resetKey`가 그대로면 입력값과 커서 위치를 유지한다.
 
 **입력 항목**
 

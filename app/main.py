@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query, Request
 from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -248,5 +248,11 @@ def delete_transaction(transaction_id: int = PathParam(ge=1, le=MAX_ID)):
     return Response(status_code=204)
 
 
-# API 경로를 먼저 등록하고, 나머지 경로는 화면 파일로 처리한다.
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+# 화면 파일은 /static 아래에서만 제공한다. "/"에 마운트하면 /api 경로의 지원하지 않는
+# 메서드 요청(예: GET /api/transactions/1)까지 화면 파일 쪽으로 넘어가 405 대신 404가 된다.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

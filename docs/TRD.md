@@ -36,7 +36,7 @@
 | 화면 | HTML + CSS + 순수 JavaScript | 빌드 도구나 프레임워크 없이 브라우저가 바로 실행할 수 있어서, 화면 하나짜리 앱에 배울 것이 가장 적다. |
 | 화면 ↔ 서버 통신 | 브라우저 `fetch` API | 브라우저에 기본 내장된 기능으로, 버튼을 누르면 페이지 이동 없이 서버에 JSON을 보내고 받을 수 있다. |
 | 정적 파일 제공 | FastAPI `StaticFiles` | HTML/JS/CSS 파일을 같은 서버에서 내려 주므로 서버를 하나만 실행하면 된다. |
-| 테스트 | pytest + FastAPI `TestClient`(httpx) | 서버를 띄우지 않고도 API를 호출해 결과를 확인할 수 있는 Python 표준 테스트 도구다. (pytest, httpx는 추가 설치 필요) |
+| 테스트 | pytest + FastAPI `TestClient`(httpx) | 서버를 띄우지 않고도 API를 호출해 결과를 확인할 수 있는 Python 표준 테스트 도구다. (`requirements.txt`에 포함) |
 
 ### 사용하지 않는 것과 이유
 
@@ -58,7 +58,8 @@ budget_book/
 │  ├─ app.js           # 버튼 처리, fetch 호출, 목록·요약 그리기
 │  └─ style.css        # 스타일 (수입 파란색, 지출 빨간색)
 ├─ tests/
-│  └─ test_api.py
+│  ├─ test_api.py      # API 테스트
+│  └─ test_sample.py   # 샘플 테스트 (1 + 1 = 2)
 ├─ docs/
 ├─ requirements.txt
 ├─ README.md           # 실행 방법, budget.db 수동 백업 안내
@@ -92,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 
 | 용도 | 쿼리 요약 |
 |---|---|
-| 월별 목록 | `WHERE date >= '2026-10-01' AND date < '2026-11-01' ORDER BY date DESC, created_at DESC, id DESC` |
+| 월별 목록 | `WHERE date BETWEEN '2026-10-01' AND '2026-10-31' ORDER BY date DESC, created_at DESC, id DESC` (말일은 달마다 계산) |
 | 월별 요약 | `SELECT COALESCE(SUM(CASE WHEN type='income' THEN amount END), 0), COALESCE(SUM(CASE WHEN type='expense' THEN amount END), 0)` + 같은 월 조건 |
 | 잔액 | 서버에서 `수입 합계 - 지출 합계`로 계산해 응답에 포함 |
 
@@ -165,6 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 
 | 상황 | 상태 코드 | 화면 처리 |
 |---|---|---|
+| 요청 본문이 올바른 JSON이 아님 | 400 | 폼 근처에 오류 메시지 표시 |
 | 입력값 검증 실패 | 422 | 어떤 항목이 잘못됐는지 폼 근처에 표시 |
 | 없는 `id` 수정·삭제 | 404 | "이미 삭제되었거나 없는 내역입니다" 표시 후 목록 새로고침 |
 | DB 오류 등 서버 오류 | 500 | 오류 메시지를 화면에 표시 (숨기지 않음) |
@@ -255,7 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 - 테스트마다 임시 DB 파일을 사용해 실제 `budget.db`를 건드리지 않는다.
 - 삭제 확인 창, 금액 표시 형식, 색상 구분은 브라우저에서 직접 확인한다.
 
-## 9. 실행 방법 (예정)
+## 9. 실행 방법
 
 ```powershell
 # 의존성 설치
