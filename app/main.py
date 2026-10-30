@@ -12,23 +12,25 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.categories import categories_as_lists
+from app.categories import TYPE_LABELS
 from app.db import connect, init_db
-from app.schemas import TransactionInput
+from app.schemas import CategoryInput, CategoryRename, TransactionInput
 
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 # 입력값 검사 순서 (API_SPEC 1.2절). 에러가 여러 개면 이 순서로 첫 번째만 돌려준다.
-FIELD_ORDER = ["date", "type", "amount", "category", "memo"]
-REQUIRED_FIELDS = {"date", "type", "amount", "category"}
+# 거래 본문은 date → type → amount → category → memo, 분류 본문은 type → name 순서다.
+FIELD_ORDER = ["date", "type", "amount", "category", "name", "memo"]
+REQUIRED_FIELDS = {"date", "type", "amount", "category", "name"}
 
 FIELD_ERROR_CODES = {
     "date": "INVALID_DATE",
     "type": "INVALID_TYPE",
     "amount": "INVALID_AMOUNT",
     "category": "INVALID_CATEGORY",
+    "name": "INVALID_CATEGORY_NAME",
     "memo": "INVALID_MEMO",
 }
 
@@ -37,6 +39,7 @@ MISSING_MESSAGES = {
     "type": "거래 유형을 선택해 주세요.",
     "amount": "금액을 입력해 주세요.",
     "category": "분류를 선택해 주세요.",
+    "name": "분류 이름을 입력해 주세요.",
 }
 
 MESSAGES = {
@@ -48,6 +51,9 @@ MESSAGES = {
     "INVALID_MEMO": "메모는 문자열이어야 합니다.",
     "INVALID_ID": "거래 ID가 올바르지 않습니다.",
     "TRANSACTION_NOT_FOUND": "이미 삭제되었거나 없는 내역입니다.",
+    "INVALID_CATEGORY_NAME": "분류 이름은 문자열이어야 합니다.",
+    "CATEGORY_NOT_FOUND": "이미 삭제되었거나 없는 분류입니다.",
+    "DEFAULT_CATEGORY_LOCKED": "기본 분류는 수정하거나 삭제할 수 없습니다.",
     "NOT_FOUND": "요청한 주소를 찾을 수 없습니다.",
     "METHOD_NOT_ALLOWED": "지원하지 않는 요청 방식입니다.",
     "DATABASE_ERROR": "데이터베이스 작업에 실패했습니다.",
@@ -97,7 +103,7 @@ async def handle_http_error(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(request: Request, exc: RequestValidationError):
-    status_code, code, message = classify_validation_errors(exc.errors())
+    status_code, code, message = classify_validation_errors(exc.errors(), request.url.path)
     return error_response(status_code, code, message)
 
 
@@ -113,10 +119,12 @@ async def handle_unexpected_error(request: Request, exc: Exception):
     return error_response(500, "INTERNAL_ERROR")
 
 
-def classify_validation_errors(errors):
+def classify_validation_errors(errors, url_path):
     """FastAPI 검증 에러 목록을 (상태 코드, code, message) 하나로 바꾼다."""
     path_errors = [e for e in errors if e["loc"][0] == "path"]
     if path_errors:
+        if url_path.startswith("/api/categories/"):
+            return 422, "INVALID_ID", "분류 ID가 올바르지 않습니다."
         return 422, "INVALID_ID", None
 
     query_errors = [e for e in errors if e["loc"][0] == "query"]
@@ -173,9 +181,87 @@ def month_bounds(year, month):
     return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}"
 
 
+CATEGORY_COLUMNS = "id, type, name, is_default"
+
+
+def category_to_dict(row):
+    return {"id": row["id"], "type": row["type"], "name": row["name"], "is_default": bool(row["is_default"])}
+
+
+def fetch_category(conn, category_id):
+    return conn.execute(f"SELECT {CATEGORY_COLUMNS} FROM categories WHERE id = ?", (category_id,)).fetchone()
+
+
+def get_user_category(conn, category_id):
+    """수정·삭제할 사용자 분류를 찾는다. 없으면 404, 기본 분류면 409."""
+    row = fetch_category(conn, category_id)
+    if row is None:
+        raise ApiError(404, "CATEGORY_NOT_FOUND")
+    if row["is_default"]:
+        raise ApiError(409, "DEFAULT_CATEGORY_LOCKED")
+    return row
+
+
+def ensure_category_name_available(conn, type_, name, exclude_id=None):
+    row = conn.execute(
+        "SELECT 1 FROM categories WHERE type = ? AND name = ? AND id IS NOT ?", (type_, name, exclude_id)
+    ).fetchone()
+    if row is not None:
+        raise ApiError(409, "DUPLICATE_CATEGORY", f"{TYPE_LABELS[type_]}에 이미 '{name}' 분류가 있습니다.")
+
+
 @app.get("/api/categories")
-def get_categories():
-    return categories_as_lists()
+def list_categories():
+    with open_db("분류 목록을 불러오지 못했습니다.") as conn:
+        rows = conn.execute(
+            f"SELECT {CATEGORY_COLUMNS} FROM categories ORDER BY is_default DESC, id"
+        ).fetchall()
+    result = {"expense": [], "income": []}
+    for row in rows:
+        result[row["type"]].append(category_to_dict(row))
+    return result
+
+
+@app.post("/api/categories", status_code=201)
+def create_category(body: CategoryInput):
+    with open_db("분류를 저장하지 못했습니다.") as conn:
+        with conn:
+            ensure_category_name_available(conn, body.type, body.name)
+            cursor = conn.execute("INSERT INTO categories (type, name) VALUES (?, ?)", (body.type, body.name))
+        row = fetch_category(conn, cursor.lastrowid)
+    return category_to_dict(row)
+
+
+@app.put("/api/categories/{category_id}")
+def rename_category(body: CategoryRename, category_id: int = PathParam(ge=1, le=MAX_ID)):
+    with open_db("분류를 수정하지 못했습니다.") as conn:
+        with conn:
+            category = get_user_category(conn, category_id)
+            if body.name != category["name"]:
+                ensure_category_name_available(conn, category["type"], body.name, exclude_id=category_id)
+                # 분류 이름과 그 분류를 쓰는 거래의 분류를 한 트랜잭션에서 함께 바꾼다.
+                conn.execute("UPDATE categories SET name = ? WHERE id = ?", (body.name, category_id))
+                conn.execute(
+                    "UPDATE transactions SET category = ? WHERE type = ? AND category = ?",
+                    (body.name, category["type"], category["name"]),
+                )
+        row = fetch_category(conn, category_id)
+    return category_to_dict(row)
+
+
+@app.delete("/api/categories/{category_id}", status_code=204)
+def delete_category(category_id: int = PathParam(ge=1, le=MAX_ID)):
+    with open_db("분류를 삭제하지 못했습니다.") as conn:
+        with conn:
+            category = get_user_category(conn, category_id)
+            used = conn.execute(
+                "SELECT COUNT(*) FROM transactions WHERE type = ? AND category = ?",
+                (category["type"], category["name"]),
+            ).fetchone()[0]
+            if used:
+                raise ApiError(409, "CATEGORY_IN_USE", f"이 분류를 사용하는 거래가 {used}건 있어 삭제할 수 없습니다.")
+            conn.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+    return Response(status_code=204)
 
 
 @app.get("/api/transactions")

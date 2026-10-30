@@ -4,6 +4,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from app.categories import DEFAULT_CATEGORIES
+
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "budget.db"
 
 SCHEMA = """
@@ -18,6 +20,14 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
+
+CREATE TABLE IF NOT EXISTS categories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
+    name        TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 20),
+    is_default  INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    UNIQUE (type, name)
+);
 """
 
 
@@ -33,8 +43,25 @@ def connect():
 
 
 def init_db():
+    """테이블을 만들고 기본 분류를 넣는다. MVP 시절 DB에서도 그대로 동작한다."""
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        with conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO categories (type, name, is_default) VALUES (?, ?, 1)",
+                [(type_, name) for type_, names in DEFAULT_CATEGORIES.items() for name in names],
+            )
+    finally:
+        conn.close()
+
+
+def category_exists(type_, name):
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM categories WHERE type = ? AND name = ?", (type_, name)
+        ).fetchone()
+        return row is not None
     finally:
         conn.close()

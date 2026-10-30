@@ -1,18 +1,18 @@
-"""요청 본문 모델 (API_SPEC 2.2절)."""
+"""요청 본문 모델 (API_SPEC 2.2절, 3.7 ~ 3.8절)."""
 
 import re
 from datetime import date as Date
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StrictInt, StrictStr, ValidationInfo, field_validator
+from pydantic import AfterValidator, BaseModel, Field, StrictInt, StrictStr, ValidationInfo, field_validator
 
-from app.categories import CATEGORIES
+from app.categories import MAX_CATEGORY_NAME_LENGTH, TYPE_LABELS
+from app.db import category_exists
 
 # 브라우저 JavaScript가 정확히 다룰 수 있는 가장 큰 정수 (Number.MAX_SAFE_INTEGER)
 MAX_AMOUNT = 9007199254740991
 
 DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
-TYPE_LABELS = {"income": "수입", "expense": "지출"}
 
 
 class TransactionInput(BaseModel):
@@ -42,7 +42,7 @@ class TransactionInput(BaseModel):
         if type_ is None:
             # 유형이 잘못된 경우 유형 에러를 먼저 돌려주므로 여기서는 검사하지 않는다.
             return value
-        if value not in CATEGORIES[type_]:
+        if not category_exists(type_, value):
             raise ValueError(f"{TYPE_LABELS[type_]}에는 '{value}' 분류를 사용할 수 없습니다.")
         return value
 
@@ -53,3 +53,28 @@ class TransactionInput(BaseModel):
             return None
         value = value.strip()
         return value or None
+
+
+def normalize_category_name(value):
+    value = value.strip()
+    if not value:
+        raise ValueError("분류 이름을 입력해 주세요.")
+    if len(value) > MAX_CATEGORY_NAME_LENGTH:
+        raise ValueError(f"분류 이름은 {MAX_CATEGORY_NAME_LENGTH}자 이하여야 합니다.")
+    return value
+
+
+CategoryName = Annotated[StrictStr, AfterValidator(normalize_category_name)]
+
+
+class CategoryInput(BaseModel):
+    """분류 추가 본문. id, is_default 등은 무시한다."""
+
+    type: Literal["income", "expense"]
+    name: CategoryName
+
+
+class CategoryRename(BaseModel):
+    """분류 이름 수정 본문. 유형은 바꿀 수 없으므로 type은 무시한다."""
+
+    name: CategoryName
