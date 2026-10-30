@@ -1,7 +1,7 @@
 # 컴포넌트 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md`, `docs/API_SPEC.md` (보조: `docs/DATA_MODEL.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(4.8 ~ 4.9절)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(4.8 ~ 4.9절), v0.5 백업(4.10절)
 
 ## 1. 개요
 
@@ -14,6 +14,7 @@
 
 ```
 App
+├─ BackupButton           (v0.5) 상단 제목 옆 백업 다운로드 버튼
 ├─ MonthSelector          연·월 선택
 ├─ SummaryPanel           선택한 월의 수입·지출 합계, 잔액
 ├─ TransactionForm        거래 등록·수정 폼 (유형, 거래일, 금액, 분류, 메모)
@@ -67,6 +68,7 @@ type AsyncState<T> =
 | `categoryError` | `ApiError \| null` | `null` (v0.4) |
 | `renamingCategoryId` | `number \| null` | `null` (v0.4, 이름 수정 중인 분류) |
 | `categoryResetKey` | `number` | `0` (v0.4, 분류 추가 성공 시 1 증가 → 추가 입력칸 비움) |
+| `backingUp` | `boolean` | `false` (v0.5, 백업 요청 중) |
 
 **하는 일**
 
@@ -287,6 +289,25 @@ type CategoryItemProps = {
 - 기본 분류: 이름과 `기본` 표시만 보여 주고 `수정`·`삭제` 버튼은 없다.
 - 사용자 분류: 이름과 `수정`·`삭제` 버튼을 보여 준다. `isRenaming`이면 이름 입력칸과 `저장`·`취소` 버튼을 보여 준다.
 
+### 4.10 `BackupButton` (v0.5)
+
+화면 상단 제목(`가계부`) 바로 옆에 둔다.
+
+```ts
+type BackupButtonProps = {
+  busy: boolean;                           // 백업 요청 중이면 true
+  onBackup: () => void;
+};
+```
+
+| 사용자 동작 | 결과 |
+|---|---|
+| `백업 다운로드` 클릭 | 버튼 비활성화·문구 `백업 중...` → `GET /api/backup` → 성공 시 응답의 파일 이름(`budget-backup-YYYY-MM-DD-HHMM.db`)으로 다운로드 시작, 버튼 원래대로 |
+| 백업 실패 (서버 에러, 연결 실패) | `alert`로 에러 문구 표시, 버튼 다시 활성화 |
+| 요청 중 다시 클릭 | 버튼이 비활성화되어 있어 요청이 한 번만 전송됨 |
+
+- 응답에서 파일 이름을 읽지 못하면 브라우저 시각으로 같은 형식의 이름을 만든다.
+
 ## 5. 상태별 문구
 
 ### 5.1 로딩
@@ -300,6 +321,7 @@ type CategoryItemProps = {
 | `TransactionItem` 삭제 버튼 | `삭제 중...` |
 | (v0.4) `CategoryManager` 목록 | `분류를 불러오는 중...` |
 | (v0.4) `CategoryManager` 추가 버튼 | `추가 중...` |
+| (v0.5) `BackupButton` | `백업 중...` |
 
 ### 5.2 빈 목록
 
@@ -327,5 +349,6 @@ type CategoryItemProps = {
 | `TransactionItem` 삭제 | `alert` | 없음 |
 | (v0.4) `CategoryManager` 불러오기 | 분류 목록 자리에 에러 문구 | 있음 |
 | (v0.4) `CategoryManager` 추가·수정·삭제 | 카드 위쪽에 에러 문구 | 없음 (다시 클릭) |
+| (v0.5) `BackupButton` | `alert` | 없음 (다시 클릭) |
 
 - 에러가 나도 이전에 보이던 성공 데이터를 남겨 두지 않는다. 화면이 실제 저장 상태와 다르게 보이지 않게 하기 위해서다.

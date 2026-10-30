@@ -1,13 +1,13 @@
 # API 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/DATA_MODEL.md` (보조: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절)
 
 ## 1. 공통 규칙
 
 - 기본 주소: `http://127.0.0.1:8000`
 - 모든 API 경로는 `/api`로 시작한다.
-- 요청·응답 본문은 JSON(`Content-Type: application/json`, UTF-8)이다.
+- 요청·응답 본문은 JSON(`Content-Type: application/json`, UTF-8)이다. 예외: `GET /api/backup`의 성공 응답은 SQLite 파일이다. (에러 응답은 JSON)
 - 인증은 없다.
 - 날짜는 `YYYY-MM-DD`, 시각은 ISO 8601(`2026-10-30T12:34:56.123456`) 문자열이다.
 - 금액은 원 단위 정수다.
@@ -25,6 +25,7 @@
 | POST | `/api/categories` | 분류 추가 (v0.4) |
 | PUT | `/api/categories/{id}` | 사용자 분류 이름 수정 (v0.4) |
 | DELETE | `/api/categories/{id}` | 사용자 분류 삭제 (v0.4) |
+| GET | `/api/backup` | 데이터베이스 백업 파일 다운로드 (v0.5) |
 
 ### 1.2 에러 형식
 
@@ -522,6 +523,37 @@ DELETE /api/categories/11
 | DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `분류를 삭제하지 못했습니다.` |
 
 - 거래 사용 여부는 같은 `type`의 거래만 센다. 예: 수입 `부업` 거래가 있어도 지출 `부업` 분류는 삭제할 수 있다.
+
+---
+
+### 3.10 `GET /api/backup` — 데이터베이스 백업 다운로드 (v0.5)
+
+서버의 `budget.db` 전체(거래 내역, 분류)를 SQLite 파일로 내려준다. 서버가 실행 중이어도 SQLite 백업 기능으로 깨지지 않은 복사본을 만든다. DB를 읽기만 하며 데이터를 바꾸지 않는다.
+
+**요청**
+
+```
+GET /api/backup
+```
+
+**응답 `200 OK`**
+
+```
+Content-Type: application/vnd.sqlite3
+Content-Disposition: attachment; filename="budget-backup-2026-10-30-1530.db"
+
+(SQLite 파일 바이트)
+```
+
+- 파일 이름: `budget-backup-YYYY-MM-DD-HHMM.db` (서버의 현재 날짜와 시각, 24시간제)
+- 받은 파일은 이름을 `budget.db`로 바꿔 그대로 사용할 수 있다. (수동 복원 방법은 README)
+
+**에러**
+
+| 상황 | 상태 코드 | code | 응답 예시 `message` |
+|---|---|---|---|
+| DB 읽기 실패 | 500 | `DATABASE_ERROR` | `백업 파일을 만들지 못했습니다.` |
+| `GET` 외의 메서드 | 405 | `METHOD_NOT_ALLOWED` | `지원하지 않는 요청 방식입니다.` |
 
 ## 4. 구현 참고
 

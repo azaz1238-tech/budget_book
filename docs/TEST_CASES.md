@@ -1,7 +1,7 @@
 # 테스트 케이스 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`, `docs/DATA_MODEL.md`, `docs/API_SPEC.md`, `docs/COMPONENT_SPEC.md`
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(1.8 ~ 1.10절, 2.8절)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(1.8 ~ 1.10절, 2.8절), v0.5 백업(1.11절, 2.9절)
 
 ## 0. 공통 사항
 
@@ -218,6 +218,18 @@
 | API-CDEL-E05 | 사용 중 | 지출 `간식`으로 거래 2건 등록 후 `간식` 삭제 | 409, `CATEGORY_IN_USE`, `message`에 `2건` 포함. 분류와 거래가 그대로 |
 | API-CDEL-E06 | DB 오류 | DB 쓰기 실패 | 500, `DATABASE_ERROR`, 분류가 그대로 |
 
+### 1.11 `GET /api/backup` (v0.5)
+
+| ID | 대상 | 상황 | 기대 결과 |
+|---|---|---|---|
+| API-BAK-N01 | 다운로드 응답 | 요청 | 200, `Content-Type`이 `application/vnd.sqlite3`, `Content-Disposition`이 `attachment; filename="budget-backup-YYYY-MM-DD-HHMM.db"` 형식이고 날짜·시각이 요청 시점의 서버 시각 |
+| API-BAK-N02 | 내용 | T1~T5와 사용자 분류 `간식`을 등록한 뒤 백업 | 받은 파일이 SQLite 파일(`SQLite format 3` 헤더)로 열리고, `transactions` 5건과 `categories` 11건(기본 10 + `간식`)이 원본과 같음 |
+| API-BAK-N03 | 복원 가능 | N02에서 받은 파일을 DB로 지정해 앱을 새로 실행 | 10월 목록·요약, 분류 목록이 원본과 같음 |
+| API-BAK-N04 | 원본 유지 | 백업 전후로 원본 DB의 거래·분류 비교 | 바뀌지 않음, 백업 후에도 거래 등록이 정상 동작 |
+| API-BAK-N05 | 빈 DB | 거래가 없는 상태에서 백업 | 받은 파일에 `transactions` 0건, 기본 분류 10건 |
+| API-BAK-E01 | DB 오류 | DB 읽기 실패 | 500, `DATABASE_ERROR` (JSON 에러 형식) |
+| API-BAK-E02 | 메서드 | `POST /api/backup` | 405, `METHOD_NOT_ALLOWED` |
+
 ---
 
 ## 2. 컴포넌트 테스트
@@ -334,3 +346,11 @@
 | CMP-CAT-E05 | 이름 수정 검사 | 수정 입력칸을 비우고 `저장` | `분류 이름을 입력해 주세요.`, 요청 없음, 수정 모드 유지 |
 | CMP-CAT-E06 | 연결 실패 | 서버 종료 후 `추가` | `서버에 연결할 수 없습니다.`, 입력값 유지 |
 | CMP-CAT-E07 | 불러오기 실패 | 분류 API 실패 | 카드 목록 자리에 에러 문구와 `다시 시도` 버튼 |
+
+### 2.9 `BackupButton` (v0.5)
+
+| ID | 대상 | 상황 | 기대 결과 |
+|---|---|---|---|
+| CMP-BAK-N01 | 버튼 위치 | 화면 열기 | 상단 제목 `가계부` 바로 옆에 `백업 다운로드` 버튼 |
+| CMP-BAK-N02 | 다운로드 | 버튼 클릭 | `budget-backup-YYYY-MM-DD-HHMM.db` 파일이 다운로드되고, 파일이 `SQLite format 3`으로 시작함. 버튼이 다시 `백업 다운로드`로 돌아옴 |
+| CMP-BAK-E01 | 연결 실패 | 서버 종료 후 버튼 클릭 | `alert`로 `서버에 연결할 수 없습니다.` 표시, 버튼 다시 활성화 |
