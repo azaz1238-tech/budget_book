@@ -1,16 +1,19 @@
+import calendar
 import logging
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.categories import categories_as_lists
-from app.db import init_db
+from app.db import connect, init_db
+from app.schemas import TransactionInput
 
 logger = logging.getLogger(__name__)
 
@@ -142,9 +145,61 @@ def classify_validation_errors(errors):
     return 422, FIELD_ERROR_CODES[field], message
 
 
+@contextmanager
+def open_db(failure_message):
+    """DB 연결을 열고, sqlite 오류는 내부 정보를 숨긴 DATABASE_ERROR로 바꾼다."""
+    conn = None
+    try:
+        conn = connect()
+        yield conn
+    except sqlite3.Error as exc:
+        logger.exception("Database error: %s", failure_message)
+        raise ApiError(500, "DATABASE_ERROR", failure_message) from exc
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+TRANSACTION_COLUMNS = "id, date, type, amount, category, memo, created_at"
+
+
+def month_bounds(year, month):
+    last_day = calendar.monthrange(year, month)[1]
+    return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last_day:02d}"
+
+
 @app.get("/api/categories")
 def get_categories():
     return categories_as_lists()
+
+
+@app.get("/api/transactions")
+def list_transactions(year: int = Query(ge=1, le=9999), month: int = Query(ge=1, le=12)):
+    first_day, last_day = month_bounds(year, month)
+    with open_db("거래 내역을 불러오지 못했습니다.") as conn:
+        rows = conn.execute(
+            f"SELECT {TRANSACTION_COLUMNS} FROM transactions "
+            "WHERE date BETWEEN ? AND ? "
+            "ORDER BY date DESC, created_at DESC, id DESC",
+            (first_day, last_day),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/transactions", status_code=201)
+def create_transaction(body: TransactionInput):
+    created_at = datetime.now().isoformat(timespec="microseconds")
+    with open_db("거래 내역을 저장하지 못했습니다.") as conn:
+        with conn:
+            cursor = conn.execute(
+                "INSERT INTO transactions (date, type, amount, category, memo, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (body.date.isoformat(), body.type, body.amount, body.category, body.memo, created_at),
+            )
+        row = conn.execute(
+            f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE id = ?", (cursor.lastrowid,)
+        ).fetchone()
+    return dict(row)
 
 
 # API 경로를 먼저 등록하고, 나머지 경로는 화면 파일로 처리한다.
