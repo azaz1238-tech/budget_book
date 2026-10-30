@@ -1,0 +1,237 @@
+:root {
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --text: #1f2328;
+  --muted: #656d76;
+  --border: #d0d7de;
+  --income: #1f6feb;
+  --expense: #cf222e;
+  --primary: #1f6feb;
+  --highlight: #fff8c5;
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  line-height: 1.5;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input[type="month"],
+input[type="date"],
+input[type="number"],
+input[type="text"],
+select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #f6f8fa;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.button-danger {
+  color: var(--expense);
+}
+
+/* 월별 요약 */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.summary dt {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.summary dd {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.income {
+  color: var(--income);
+}
+
+.expense {
+  color: var(--expense);
+}
+
+/* 입력 폼 */
+.transaction-form .field {
+  display: block;
+  margin: 0 0 12px;
+  border: 0;
+  padding: 0;
+}
+
+.transaction-form label {
+  display: block;
+}
+
+.type-field legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+
+.type-field .radio {
+  display: inline-block;
+  margin-right: 16px;
+}
+
+.form-error {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #ffebe9;
+  color: var(--expense);
+}
+
+.form-error[hidden] {
+  display: none;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 거래 목록 */
+.transaction-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.transaction-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.transaction-item:first-child {
+  border-top: 0;
+}
+
+.transaction-item.is-editing {
+  background: var(--highlight);
+}
+
+.item-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.item-date {
+  color: var(--muted);
+}
+
+.item-memo {
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.item-amount {
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.item-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 상태 문구 */
+.status {
+  color: var(--muted);
+}
+
+.status p {
+  margin: 0 0 8px;
+}
+
+.status-error {
+  color: var(--expense);
+}
+
+@media (max-width: 480px) {
+  .summary {
+    grid-template-columns: 1fr;
+  }
+}

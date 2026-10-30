@@ -7,7 +7,15 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>가계부</h1>
+  <main class="app">
+    <header class="app-header">
+      <h1>가계부</h1>
+      <div id="month-selector"></div>
+    </header>
+    <section id="summary-panel" class="card" aria-label="월별 요약"></section>
+    <section id="transaction-form" class="card" aria-label="거래 입력"></section>
+    <section id="transaction-list" class="card" aria-label="거래 내역"></section>
+  </main>
   <script src="app.js"></script>
 </body>
 </html>
