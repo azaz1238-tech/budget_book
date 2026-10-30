@@ -191,6 +191,20 @@ def list_transactions(year: int = Query(ge=1, le=9999), month: int = Query(ge=1,
     return [dict(row) for row in rows]
 
 
+@app.get("/api/summary")
+def get_summary(year: int = Query(ge=1, le=9999), month: int = Query(ge=1, le=12)):
+    first_day, last_day = month_bounds(year, month)
+    with open_db("월별 요약을 불러오지 못했습니다.") as conn:
+        income, expense = conn.execute(
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN type = 'income' THEN amount END), 0), "
+            "COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) "
+            "FROM transactions WHERE date BETWEEN ? AND ?",
+            (first_day, last_day),
+        ).fetchone()
+    return {"year": year, "month": month, "income": income, "expense": expense, "balance": income - expense}
+
+
 @app.post("/api/transactions", status_code=201)
 def create_transaction(body: TransactionInput):
     created_at = datetime.now().isoformat(timespec="microseconds")
