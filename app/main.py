@@ -6,8 +6,9 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
+from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -46,6 +47,7 @@ MESSAGES = {
     "INVALID_CATEGORY": "분류가 올바르지 않습니다.",
     "INVALID_MEMO": "메모는 문자열이어야 합니다.",
     "INVALID_ID": "거래 ID가 올바르지 않습니다.",
+    "TRANSACTION_NOT_FOUND": "이미 삭제되었거나 없는 내역입니다.",
     "NOT_FOUND": "요청한 주소를 찾을 수 없습니다.",
     "METHOD_NOT_ALLOWED": "지원하지 않는 요청 방식입니다.",
     "DATABASE_ERROR": "데이터베이스 작업에 실패했습니다.",
@@ -162,6 +164,9 @@ def open_db(failure_message):
 
 TRANSACTION_COLUMNS = "id, date, type, amount, category, memo, created_at"
 
+# SQLite INTEGER의 최대값. 이보다 큰 id는 DB에 넘기지 않고 INVALID_ID로 처리한다.
+MAX_ID = 2**63 - 1
+
 
 def month_bounds(year, month):
     last_day = calendar.monthrange(year, month)[1]
@@ -200,6 +205,33 @@ def create_transaction(body: TransactionInput):
             f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE id = ?", (cursor.lastrowid,)
         ).fetchone()
     return dict(row)
+
+
+@app.put("/api/transactions/{transaction_id}")
+def update_transaction(body: TransactionInput, transaction_id: int = PathParam(ge=1, le=MAX_ID)):
+    with open_db("거래 내역을 수정하지 못했습니다.") as conn:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE transactions SET date = ?, type = ?, amount = ?, category = ?, memo = ? "
+                "WHERE id = ?",
+                (body.date.isoformat(), body.type, body.amount, body.category, body.memo, transaction_id),
+            )
+        if cursor.rowcount == 0:
+            raise ApiError(404, "TRANSACTION_NOT_FOUND")
+        row = conn.execute(
+            f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
+    return dict(row)
+
+
+@app.delete("/api/transactions/{transaction_id}", status_code=204)
+def delete_transaction(transaction_id: int = PathParam(ge=1, le=MAX_ID)):
+    with open_db("거래 내역을 삭제하지 못했습니다.") as conn:
+        with conn:
+            cursor = conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+        if cursor.rowcount == 0:
+            raise ApiError(404, "TRANSACTION_NOT_FOUND")
+    return Response(status_code=204)
 
 
 # API 경로를 먼저 등록하고, 나머지 경로는 화면 파일로 처리한다.
