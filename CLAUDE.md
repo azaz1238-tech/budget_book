@@ -45,5 +45,7 @@
 
 ## 자주 쓰는 명령
 
+- 의존성 설치: `.venv\Scripts\python -m pip install -r requirements.txt`
+- 서버 실행: `.venv\Scripts\python -m uvicorn app.main:app --reload` (http://127.0.0.1:8000)
 - API 테스트: `.venv\Scripts\python -m pytest tests`
 - 패키지 설정 및 개발 도구가 추가되면 해당 명령을 문서화한다.

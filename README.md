@@ -4,8 +4,9 @@
 
 ## 현재 상태
 
-- 기획 문서와 API 테스트 코드까지 작성된 단계입니다.
-- **애플리케이션 코드(`app/`, `static/`)는 아직 구현되지 않았습니다.** 그래서 지금 테스트를 실행하면 모두 실패합니다.
+- MVP(v0.1 ~ v0.3) 기능이 구현되어 있습니다: 거래 등록·조회·수정·삭제, 고정 분류, 월별 요약.
+- API 테스트 140개와 샘플 테스트 1개가 모두 통과합니다.
+- 화면 동작(`docs/TEST_CASES.md` 2장)은 브라우저에서 직접 확인합니다.
 
 ## MVP 기능
 
@@ -32,11 +33,20 @@
 
 ```
 budget_book/
-├─ docs/              기획 문서
+├─ app/
+│  ├─ main.py         FastAPI 앱, API 경로, 에러 처리
+│  ├─ db.py           SQLite 연결, 테이블 생성
+│  ├─ schemas.py      요청 본문 검증
+│  └─ categories.py   고정 분류 목록
+├─ static/
+│  ├─ index.html      화면
+│  ├─ app.js          화면 동작, API 호출
+│  └─ style.css       스타일
 ├─ tests/
-│  └─ test_api.py     API 테스트
-├─ app/               (구현 예정) FastAPI 서버
-├─ static/            (구현 예정) 화면 HTML/JS/CSS
+│  ├─ test_api.py     API 테스트
+│  └─ test_sample.py  샘플 테스트
+├─ docs/              기획 문서
+├─ requirements.txt   의존성
 ├─ CLAUDE.md          작업 규칙
 └─ README.md
 ```
@@ -56,23 +66,25 @@ budget_book/
 
 ## 설치와 실행 (Windows PowerShell 기준)
 
+Python 3.12가 필요합니다.
+
 ```powershell
 # 가상환경 만들기
 python -m venv .venv
 
 # 의존성 설치
-.venv\Scripts\python -m pip install fastapi uvicorn pytest httpx
+.venv\Scripts\python -m pip install -r requirements.txt
 
-# API 테스트 실행
+# 서버 실행 후 브라우저에서 http://127.0.0.1:8000 접속
+.venv\Scripts\python -m uvicorn app.main:app --reload
+
+# 테스트 실행
 .venv\Scripts\python -m pytest tests
 ```
 
-서버 실행은 애플리케이션 코드를 구현한 뒤 아래 명령으로 할 예정입니다. 실행 후 브라우저에서 http://127.0.0.1:8000 에 접속합니다.
-
-```powershell
-.venv\Scripts\python -m uvicorn app.main:app --reload
-```
-
+- 처음 실행하면 프로젝트 폴더에 `budget.db`가 자동으로 만들어집니다.
+- API 문서는 http://127.0.0.1:8000/docs 에서 볼 수 있습니다. 에러 응답은 이 화면의 예시와 달리 `docs/API_SPEC.md`의 `{ "error": { "code", "message" } }` 형식을 따릅니다.
+- 테스트는 임시 DB 파일을 사용하므로 `budget.db`를 건드리지 않습니다.
 - 로그인 기능이 없으므로 서버를 외부에 공개하지 마세요. 기본 설정(`127.0.0.1`)은 내 컴퓨터에서만 접속할 수 있습니다.
 
 ## 데이터 백업
