@@ -97,6 +97,24 @@ h3 {
   min-width: 160px;
 }
 
+/* 월 선택 + 이전·다음·이번 달 버튼 (v0.7) */
+.month-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.month-navigator {
+  display: flex;
+  gap: 6px;
+}
+
+.nav-button {
+  padding: 0 12px;
+  font-size: 0.85rem;
+}
+
 /* --------------------------------------------------------------------------
    카드
    -------------------------------------------------------------------------- */
@@ -124,6 +142,7 @@ input[type="month"],
 input[type="date"],
 input[type="number"],
 input[type="text"],
+input[type="search"],
 select {
   width: 100%;
   height: 40px;
@@ -265,6 +284,81 @@ button:disabled {
 }
 
 /* --------------------------------------------------------------------------
+   분류별 지출 (v0.8, v0.10 예산)
+   -------------------------------------------------------------------------- */
+
+.spending-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spending-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.spending-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.spending-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.spending-name {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.spending-meta {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.spending-amount {
+  color: var(--expense);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.spending-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.spending-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: #f08a8a;
+}
+
+.spending-fill.is-over {
+  background: var(--expense);
+}
+
+.spending-budget {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.spending-budget.is-over {
+  color: var(--expense);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------------------------
    거래 입력 폼 (넓은 화면에서 2열)
    -------------------------------------------------------------------------- */
 
@@ -347,21 +441,52 @@ button:disabled {
    거래 목록
    -------------------------------------------------------------------------- */
 
-.list-filter {
-  display: flex;
-  align-items: center;
+/* 검색·필터 (v0.9) */
+.list-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.85rem;
   font-weight: 600;
 }
 
-.list-filter .filter-select {
+.filter-field select {
   flex: 1;
-  max-width: 280px;
+  min-width: 0;
   font-size: 0.95rem;
   font-weight: 400;
+}
+
+.filter-search {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.filter-search input {
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-reset {
+  justify-self: start;
+}
+
+.filter-error {
+  margin-bottom: 12px;
+}
+
+.recurring-apply-row {
+  margin-bottom: 12px;
 }
 
 .filter-total {
@@ -540,6 +665,20 @@ button:disabled {
   font-weight: 600;
 }
 
+.budget-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.category-item input.budget-input {
+  flex: 1;
+  min-width: 90px;
+  width: auto;
+  height: 32px;
+}
+
 .category-add {
   margin-top: 18px;
   padding-top: 16px;
@@ -558,6 +697,81 @@ button:disabled {
 .category-add-row input {
   flex: 1;
   min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   고정 거래 (v0.11)
+   -------------------------------------------------------------------------- */
+
+#recurring-manager > .form-error {
+  margin-bottom: 14px;
+}
+
+.recurring-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.recurring-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.recurring-item:first-child {
+  border-top: 0;
+}
+
+.recurring-item.is-editing {
+  margin: 0 -8px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  background: var(--highlight);
+}
+
+.recurring-main {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.recurring-text {
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+
+.recurring-item .item-actions {
+  grid-column: auto;
+}
+
+.recurring-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.recurring-form > h3,
+.recurring-form > .type-field,
+.recurring-form > .form-actions {
+  grid-column: 1 / -1;
+}
+
+.recurring-form > h3 {
+  margin: 0;
+}
+
+.recurring-category-field label {
+  display: block;
 }
 
 /* --------------------------------------------------------------------------
@@ -600,16 +814,14 @@ button:disabled {
   }
 
   .transaction-form,
-  .category-groups {
+  .category-groups,
+  .recurring-form,
+  .list-filters {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .app-header input[type="month"] {
     min-width: 0;
-  }
-
-  .list-filter .filter-select {
-    max-width: none;
   }
 }
 

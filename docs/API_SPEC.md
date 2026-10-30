@@ -1,7 +1,7 @@
 # API 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/DATA_MODEL.md` (보조: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절), v0.6 분류 필터(3.2·3.6절 쿼리), v0.8 ~ v0.11 예정(3.11 ~ 3.19절, v0.9는 3.2·3.6절 쿼리 변경, 아직 구현 전)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절), v0.6 분류 필터(3.2·3.6절 쿼리), v0.8 ~ v0.11(3.11 ~ 3.19절, v0.9는 3.2·3.6절 쿼리 변경)
 
 ## 1. 공통 규칙
 
@@ -586,7 +586,7 @@ Content-Disposition: attachment; filename="budget-backup-2026-10-30-1530.db"
 
 ---
 
-### 3.11 `GET /api/summary/categories` — 분류별 지출 합계 (v0.8, 구현 전)
+### 3.11 `GET /api/summary/categories` — 분류별 지출 합계 (v0.8)
 
 선택한 달의 지출을 분류별로 합친다. 수입은 포함하지 않는다. 거래 목록의 필터 쿼리는 받지 않는다(항상 그 달 전체).
 
@@ -626,7 +626,7 @@ GET /api/summary/categories?year=2026&month=10
 
 ---
 
-### 3.12 `GET /api/budgets` — 예산 목록 (v0.10, 구현 전)
+### 3.12 `GET /api/budgets` — 예산 목록 (v0.10)
 
 **응답 `200 OK`** (분류 목록 순서와 같음)
 
@@ -643,7 +643,7 @@ GET /api/summary/categories?year=2026&month=10
 
 ---
 
-### 3.13 `PUT /api/budgets/{category_id}` — 예산 정하기·바꾸기 (v0.10, 구현 전)
+### 3.13 `PUT /api/budgets/{category_id}` — 예산 정하기·바꾸기 (v0.10)
 
 없으면 새로 만들고, 있으면 금액을 바꾼다.
 
@@ -670,7 +670,7 @@ GET /api/summary/categories?year=2026&month=10
 
 ---
 
-### 3.14 `DELETE /api/budgets/{category_id}` — 예산 해제 (v0.10, 구현 전)
+### 3.14 `DELETE /api/budgets/{category_id}` — 예산 해제 (v0.10)
 
 **응답 `204 No Content`**
 
@@ -684,7 +684,7 @@ GET /api/summary/categories?year=2026&month=10
 
 ---
 
-### 3.15 `GET /api/recurring` — 고정 거래 목록 (v0.11, 구현 전)
+### 3.15 `GET /api/recurring` — 고정 거래 목록 (v0.11)
 
 **쿼리:** `year`, `month` (선택, 함께 보내야 함). 보내면 각 항목에 그 달에 이미 불러왔는지(`applied`)를 넣는다.
 
@@ -710,7 +710,7 @@ GET /api/recurring?year=2026&month=10
 
 ---
 
-### 3.16 `POST /api/recurring` — 고정 거래 추가 (v0.11, 구현 전)
+### 3.16 `POST /api/recurring` — 고정 거래 추가 (v0.11)
 
 | 필드 | 필수 | 규칙 |
 |---|---|---|
@@ -739,7 +739,7 @@ GET /api/recurring?year=2026&month=10
 
 ---
 
-### 3.17 `PUT /api/recurring/{id}` — 고정 거래 수정 (v0.11, 구현 전)
+### 3.17 `PUT /api/recurring/{id}` — 고정 거래 수정 (v0.11)
 
 본문과 검사 규칙은 3.16과 같다. 이미 불러온 거래는 바뀌지 않는다.
 
@@ -754,7 +754,7 @@ GET /api/recurring?year=2026&month=10
 
 ---
 
-### 3.18 `DELETE /api/recurring/{id}` — 고정 거래 삭제 (v0.11, 구현 전)
+### 3.18 `DELETE /api/recurring/{id}` — 고정 거래 삭제 (v0.11)
 
 **응답 `204 No Content`.** 그 틀의 불러온 기록도 함께 지운다. 이미 불러온 거래는 그대로 둔다.
 
@@ -766,7 +766,7 @@ GET /api/recurring?year=2026&month=10
 
 ---
 
-### 3.19 `POST /api/recurring/apply` — 선택한 달에 고정 거래 불러오기 (v0.11, 구현 전)
+### 3.19 `POST /api/recurring/apply` — 선택한 달에 고정 거래 불러오기 (v0.11)
 
 그 달에 아직 불러오지 않은 고정 거래를 모두 거래로 추가하고 불러온 기록을 남긴다. 한 트랜잭션이다.
 

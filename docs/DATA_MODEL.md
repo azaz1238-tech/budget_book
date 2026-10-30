@@ -1,7 +1,7 @@
 # 데이터 모델 초안 - 개인 가계부
 
 > 기준 문서: `docs/PRD.md` (보조: `docs/SPEC.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(6절), v0.5 백업(데이터 모델 변경 없음, 백업 파일은 이 문서의 테이블을 그대로 담은 SQLite 파일), v0.6 분류별 필터(데이터 모델 변경 없음, `transactions.(type, category)`로 거름), v0.7 ~ v0.9(데이터 모델 변경 없음), v0.10 예산(7절), v0.11 고정 거래(8절) — v0.10·v0.11은 아직 구현 전
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(6절), v0.5 백업(데이터 모델 변경 없음, 백업 파일은 이 문서의 테이블을 그대로 담은 SQLite 파일), v0.6 분류별 필터(데이터 모델 변경 없음, `transactions.(type, category)`로 거름), v0.7 ~ v0.9(데이터 모델 변경 없음), v0.10 예산(7절), v0.11 고정 거래(8절)
 
 ## 1. 개요
 
@@ -229,7 +229,7 @@ const myCategory: Category = { id: 11, type: "income", name: "부업", is_defaul
 
 - 분류 이름 길이는 앞뒤 공백을 제거한 뒤의 글자 수(유니코드 문자 수)로 센다. 최대 20자는 목록과 선택 상자 표시가 깨지지 않도록 정한 값이다.
 
-## 7. v0.10: 테이블 `budgets` (구현 전)
+## 7. v0.10: 테이블 `budgets`
 
 > 요구사항: SPEC FR-14, PRD F-16 / 설계 이유: TRD 14.4
 
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS budgets (
 - 수입 분류(`categories.type = 'income'`)의 `category_id`는 넣지 않는다. (서버 코드에서 거절)
 - 계산 값 (저장하지 않음): 사용률 = 그 달 지출 합계 ÷ 예산, 남은 금액 = 예산 - 그 달 지출 합계 (음수면 초과)
 
-## 8. v0.11: 테이블 `recurring_transactions`, `recurring_applied` (구현 전)
+## 8. v0.11: 테이블 `recurring_transactions`, `recurring_applied`
 
 > 요구사항: SPEC FR-15, PRD F-17 / 설계 이유: TRD 14.5
 

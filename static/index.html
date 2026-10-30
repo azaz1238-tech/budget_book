@@ -13,11 +13,16 @@
         <h1>가계부</h1>
         <div id="backup-button"></div>
       </div>
-      <div id="month-selector"></div>
+      <div class="month-controls">
+        <div id="month-selector"></div>
+        <div id="month-navigator" class="month-navigator"></div>
+      </div>
     </header>
     <section id="summary-panel" class="card" aria-label="월별 요약"></section>
+    <section id="category-spending" class="card" aria-label="분류별 지출"></section>
     <section id="transaction-form" class="card" aria-label="거래 입력"></section>
     <section id="category-manager" class="card" aria-label="분류 관리"></section>
+    <section id="recurring-manager" class="card" aria-label="고정 거래"></section>
     <section id="transaction-list" class="card" aria-label="거래 내역"></section>
   </main>
   <script src="/static/app.js"></script>
