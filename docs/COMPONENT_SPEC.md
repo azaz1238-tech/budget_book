@@ -29,7 +29,7 @@ App
    ├─ RecurringApplyButton (v0.11) 이번 달 고정 거래 불러오기
    └─ TransactionItem     거래 1건 (수정·삭제 버튼)
 
-StatusMessage             로딩·빈 목록·에러 문구 (SummaryPanel, TransactionForm, CategoryManager, TransactionList 안에서 사용)
+StatusMessage             로딩·빈 목록·에러 문구 (SummaryPanel, CategorySpending, TransactionForm, CategoryManager, RecurringManager, TransactionList 안에서 사용)
 ```
 
 ## 3. 공통 타입
@@ -75,27 +75,35 @@ type AsyncState<T> =
 | `renamingCategoryId` | `number \| null` | `null` (v0.4, 이름 수정 중인 분류) |
 | `categoryResetKey` | `number` | `0` (v0.4, 분류 추가 성공 시 1 증가 → 추가 입력칸 비움) |
 | `backingUp` | `boolean` | `false` (v0.5, 백업 요청 중) |
-| `filter` | `{ type: TransactionType; category: string } \| null` | `null` (v0.6, `null`이면 전체) |
-| `filterSummary` | `AsyncState<MonthlySummary> \| null` | `null` (v0.6, 필터가 있을 때만 그 분류의 합계) |
+| `filters` | `{ type: TransactionType \| null; category: string \| null; q: string \| null }` | 모두 `null` (v0.9, v0.6의 `filter`를 대체. 모두 `null`이면 조건 없음) |
+| `filterError` | `ApiError \| null` | `null` (v0.9, 검색어 클라이언트 검사 에러) |
+| `filterSummary` | `AsyncState<MonthlySummary> \| null` | `null` (v0.6, 조건이 있을 때만 걸러진 거래의 합계) |
 | `categorySpending` | `AsyncState<CategorySpendingSummary>` | `loading` (v0.8) |
-| `filters` | `{ type: TransactionType \| null; category: string \| null; q: string \| null }` | 모두 `null` (v0.9, v0.6 `filter`를 대체) |
 | `budgets` | `AsyncState<Budget[]>` | `loading` (v0.10) |
 | `budgetEditingId` | `number \| null` | `null` (v0.10, 예산 입력 중인 분류) |
 | `recurring` | `AsyncState<RecurringTransaction[]>` | `loading` (v0.11, 선택한 달 기준 `applied` 포함) |
 | `recurringEditing` | `RecurringTransaction \| null` | `null` (v0.11) |
 | `recurringBusy` | `boolean` | `false` (v0.11, 추가·수정·삭제 요청 중) |
 | `recurringError` | `ApiError \| null` | `null` (v0.11) |
+| `recurringResetKey` | `number` | `0` (v0.11, 고정 거래 폼을 새로 채울 때마다 1 증가: 저장 성공, 수정 시작, 수정 취소, 수정 중인 틀 삭제) |
 | `applyingRecurring` | `boolean` | `false` (v0.11, 불러오기 요청 중) |
 
 **하는 일**
 
+"그 달 데이터"는 거래 목록, 월별 요약, 검색 결과 합계(조건이 있을 때), 분류별 지출, 고정 거래 목록(그 달 `applied` 포함)이다.
+
 | 시점 | 동작 |
 |---|---|
-| 처음 열 때 | `GET /api/categories`, 그리고 `selected` 기준으로 `GET /api/transactions`, `GET /api/summary` 호출 |
-| 월 변경 | `selected` 변경 → 목록·요약 다시 조회 |
-| 등록·수정·삭제 성공 | 목록·요약 다시 조회 |
-| (v0.4) 분류 추가·삭제 성공 | 분류 목록 다시 조회 |
-| (v0.4) 분류 이름 수정 성공 | 분류 목록과 거래 목록 다시 조회 (거래에 표시되는 분류 이름이 바뀌므로) |
+| 처음 열 때 | `GET /api/categories`, `GET /api/budgets`, 그리고 `selected` 기준으로 그 달 데이터 조회 |
+| 월 변경 | `selected` 변경 → 그 달 데이터 다시 조회 (검색·필터 조건 유지) |
+| 등록·수정·삭제 성공 | 그 달 데이터 다시 조회 (저장한 거래의 연·월로 `selected`를 옮긴 뒤) |
+| (v0.9) 검색·필터 조건 변경 | 거래 목록과 검색 결과 합계 다시 조회 |
+| (v0.4) 분류 추가 성공 | 분류 목록 다시 조회 |
+| (v0.4) 분류 삭제 성공 | 분류 목록, 예산, 분류별 지출 다시 조회 |
+| (v0.4) 분류 이름 수정 성공 | 분류 목록, 거래 목록, 검색 결과 합계, 분류별 지출, 예산, 고정 거래 다시 조회 (표시되는 분류 이름이 바뀌므로) |
+| (v0.10) 예산 저장·해제 성공 | 예산과 분류별 지출 다시 조회 |
+| (v0.11) 고정 거래 추가·수정·삭제 성공 | 고정 거래 목록 다시 조회 |
+| (v0.11) 고정 거래 불러오기 성공 | 그 달 데이터 다시 조회 |
 
 ### 4.2 `MonthSelector`
 
@@ -197,27 +205,33 @@ type TransactionListProps = {
   deletingId: number | null;
   onEdit: (transaction: Transaction) => void;
   onDelete: (transaction: Transaction) => void;
-  onRetry: () => void;
-  // v0.6 분류 필터
+  onRetry: () => void;                     // 목록과 검색 결과 합계를 다시 조회
+  // v0.9 검색·필터 (v0.6 분류 필터를 대체, 4.13절)
   categories: AsyncState<Categories>;
-  filter: { type: TransactionType; category: string } | null;
+  filters: { type: TransactionType | null; category: string | null; q: string | null };
+  filterError: ApiError | null;
   filterSummary: AsyncState<MonthlySummary> | null;
-  onFilterChange: (filter: { type: TransactionType; category: string } | null) => void;
+  onFiltersChange: (filters: TransactionListProps["filters"]) => void;
+  onFilterInvalid: (message: string) => void;
+  // v0.11 고정 거래 불러오기 (4.16절)
+  recurring: AsyncState<RecurringTransaction[]>;
+  applying: boolean;
+  onApplyRecurring: (pending: number) => void;
 };
 ```
 
 - 서버가 정렬해서 준 순서(거래일 → 등록 시각 → ID 내림차순) 그대로 표시한다.
-- (v0.6) 제목 아래에 `분류 필터` 선택 상자를 둔다: `전체 분류`, `지출` 묶음(지출 분류들), `수입` 묶음(수입 분류들). 분류를 아직 못 불러왔으면 `전체 분류`만 있다.
-- (v0.6) 필터가 있으면 선택 상자 아래에 `식비(지출) · 3건 · 합계 62,500원` 한 줄을 보여 준다. 건수는 목록의 거래 수, 합계는 `filterSummary`의 해당 유형 합계다. 합계를 불러오는 중이면 `합계 계산 중...`, 실패하면 에러 문구를 보여 준다.
+- 카드 안 순서: 제목 `거래 내역` → 검색·필터(4.13절) → 검색어 에러 → 결과 줄 → 고정 거래 불러오기 버튼(4.16절) → 목록.
+- (v0.6에서는 `분류 필터` 선택 상자 하나와 `식비(지출) · 3건 · 합계 62,500원` 줄이었고, v0.9에서 4.13절의 검색·필터로 바뀌었다.)
 
-| 사용자 동작 (v0.6) | 결과 |
+| 사용자 동작 (검색·필터) | 결과 |
 |---|---|
-| 필터에서 분류 선택 | `onFilterChange` → 그 분류의 목록과 합계를 다시 조회 |
-| 필터를 `전체 분류`로 변경 | 필터 해제 → 전체 목록 다시 조회, 건수·합계 줄 숨김 |
-| 필터 상태에서 월 변경 | 필터 유지, 새 달의 그 분류 목록과 합계 조회 |
-| 필터 상태에서 거래 등록·수정·삭제 성공 | 목록과 합계 다시 조회 |
-| 필터의 분류 이름을 분류 관리에서 수정 | 필터가 새 이름으로 바뀌고 목록·합계 다시 조회 |
-| 분류 목록을 다시 불러왔는데 필터의 분류가 없음 | 필터를 `전체 분류`로 되돌리고 목록 다시 조회 |
+| 조건 변경 | `onFiltersChange` → 목록과 검색 결과 합계를 다시 조회 |
+| `필터 초기화` | 모든 조건 해제 → 전체 목록 다시 조회, 결과 줄 숨김 |
+| 조건 상태에서 월 변경 | 조건 유지, 새 달 기준으로 목록과 합계 조회 |
+| 조건 상태에서 거래 등록·수정·삭제 성공 | 목록과 합계 다시 조회 |
+| 필터로 고른 분류의 이름을 분류 관리에서 수정 | 분류 조건이 새 이름으로 바뀌고 목록·합계 다시 조회 |
+| 분류 목록을 다시 불러왔는데 필터로 고른 분류가 없음 (삭제됨) | 유형·분류 조건을 해제하고 목록 다시 조회 (검색어는 유지) |
 
 | 사용자 동작 | 결과 |
 |---|---|
@@ -264,7 +278,7 @@ type StatusMessageProps = {
 ```ts
 type CategoryManagerProps = {
   categories: AsyncState<Categories>;
-  busy: boolean;                           // 추가·수정·삭제 요청 중이면 true
+  busy: boolean;                           // 추가·수정·삭제·예산 요청 중이면 true
   error: ApiError | null;                  // 클라이언트 검사 또는 서버 에러
   renamingId: number | null;               // 이름 수정 중인 분류
   resetKey: number;                        // 바뀔 때만 추가 입력칸을 비움 (추가 성공 시)
@@ -274,6 +288,13 @@ type CategoryManagerProps = {
   onCancelRename: () => void;
   onDelete: (category: Category) => void;
   onRetry: () => void;
+  // v0.10 예산 (4.14절)
+  budgets: AsyncState<Budget[]>;
+  budgetEditingId: number | null;          // 예산 입력 중인 분류
+  onStartBudget: (category: Category) => void;
+  onSaveBudget: (category: Category, amountText: string) => void;
+  onDeleteBudget: (category: Category) => void;
+  onCancelBudget: () => void;
 };
 ```
 
@@ -316,6 +337,13 @@ type CategoryItemProps = {
   onRename: (category: Category, name: string) => void;
   onCancelRename: () => void;
   onDelete: (category: Category) => void;
+  // v0.10 예산 (4.14절)
+  budget: number | null;                   // 이 분류의 월 예산, 없으면 null
+  isBudgeting: boolean;
+  onStartBudget: (category: Category) => void;
+  onSaveBudget: (category: Category, amountText: string) => void;
+  onDeleteBudget: (category: Category) => void;
+  onCancelBudget: () => void;
 };
 ```
 
@@ -370,6 +398,7 @@ type MonthNavigatorProps = {
 ```ts
 type CategorySpendingProps = {
   spending: AsyncState<CategorySpendingSummary>;
+  selected: YearMonth;                     // 빈 상태 문구의 연·월
   onRetry: () => void;
 };
 ```
@@ -387,15 +416,18 @@ type CategorySpendingProps = {
 type TransactionFiltersProps = {
   categories: AsyncState<Categories>;
   filters: { type: TransactionType | null; category: string | null; q: string | null };
+  qDraft: string;                          // 다시 그려도 유지할, 아직 적용하지 않은 검색어
   onChange: (filters: TransactionFiltersProps["filters"]) => void;
+  onInvalid: (message: string) => void;    // 검색어 클라이언트 검사 실패
 };
 ```
 
-- 유형 선택(`전체`, `지출`, `수입`), 분류 선택(`전체 분류` + 분류들), 검색어 입력칸과 `검색` 버튼, `필터 초기화` 버튼을 둔다.
+- 유형 선택(`전체`, `지출`, `수입`), 분류 선택(`전체 분류` + 분류들), 검색어 입력칸(`메모 검색`)과 `검색` 버튼, `필터 초기화` 버튼을 둔다.
 - 유형이 `전체`면 분류 선택지는 지출·수입 묶음 전체, 유형을 고르면 그 유형의 분류만 보여 준다. 분류를 고르면 유형도 그 분류의 유형으로 맞춘다.
-- 유형을 바꿔서 지금 고른 분류가 그 유형에 없으면 분류를 `전체 분류`로 되돌린다.
-- 검색어는 Enter 또는 `검색` 버튼으로 적용하고, 앞뒤 공백을 제거한다. 50자를 넘으면 요청 없이 `검색어는 50자 이하여야 합니다.`를 보여 준다.
-- 조건이 하나라도 있으면 아래에 결과 줄을 보여 준다: `검색 결과 · 3건 · 수입 0원 · 지출 20,500원`. 유형이 정해져 있으면 그 유형 합계만 보여 준다.
+- 유형을 바꾸면(`전체`로 바꾸는 경우 포함) 분류를 `전체 분류`로 되돌린다.
+- 분류 목록을 아직 못 불러왔어도 고른 분류는 선택 상자에 보인다.
+- 검색어는 Enter 또는 `검색` 버튼으로 적용하고, 앞뒤 공백을 제거한다. 50자를 넘으면 요청 없이 필터 아래에 `검색어는 50자 이하여야 합니다.`를 보여 준다. 다음 조건 변경 때 사라진다.
+- 조건이 하나라도 있으면 아래에 결과 줄을 보여 준다: `검색 결과 · 3건 · 수입 0원 · 지출 20,500원`. 유형이 정해져 있으면 그 유형 합계만 보여 준다. 목록이나 합계를 불러오는 중이면 `검색 결과 · 합계 계산 중...`, 합계를 불러오지 못하면 그 에러 문구를 보여 준다.
 - 결과가 없으면 `조건에 맞는 거래가 없습니다.`
 - `필터 초기화`는 조건이 있을 때만 활성화한다.
 
@@ -405,14 +437,50 @@ type TransactionFiltersProps = {
 - `예산` 버튼을 누르면 그 줄에 금액 입력칸과 `저장`, `해제`(예산이 있을 때만), `취소` 버튼이 나온다.
 - 금액 검사 문구는 거래 금액과 같다(`금액을 입력해 주세요.`, `금액은 1 이상의 정수여야 합니다.`).
 - 저장·해제가 성공하면 예산 목록과 분류별 지출을 다시 불러온다. 실패하면 분류 관리 카드 위쪽에 에러 문구를 보여 준다.
+- 예산 입력 중에 `수정`(이름 수정)을 누르면 예산 입력은 닫히고, 그 반대도 같다.
+- (현재 제한) 예산 목록(`GET /api/budgets`)을 불러오는 중이거나 실패하면 예산 표시가 나오지 않고, 실패해도 에러 문구를 보여 주지 않는다. 분류별 지출의 예산 정보는 별도 API라 영향이 없다.
 
 ### 4.15 `RecurringManager` / `RecurringItem` (v0.11)
 
 분류 관리 카드 아래의 별도 카드다. 제목은 `고정 거래`.
 
+```ts
+type RecurringManagerProps = {
+  recurring: AsyncState<RecurringTransaction[]>;
+  categories: AsyncState<Categories>;
+  editing: RecurringTransaction | null;    // null이면 추가 모드
+  busy: boolean;                           // 추가·수정·삭제 요청 중
+  error: ApiError | null;                  // 클라이언트 검사 또는 서버 에러
+  resetKey: number;                        // 바뀔 때만 폼을 기본값 또는 editing 값으로 다시 채움
+  onSubmit: (input: RecurringInput) => void;
+  onCancelEdit: () => void;
+  onEdit: (item: RecurringTransaction) => void;
+  onDelete: (item: RecurringTransaction) => void;
+  onRetry: () => void;
+};
+
+type RecurringItemProps = {
+  item: RecurringTransaction;
+  busy: boolean;
+  isEditing: boolean;                      // 지금 폼에서 수정 중이면 강조 표시
+  onEdit: (item: RecurringTransaction) => void;
+  onDelete: (item: RecurringTransaction) => void;
+};
+```
+
 - 목록: `매달 1일 · 지출 · 주거 · 550,000원 · 월세`처럼 한 줄씩, 날 순서로 보여 준다. 각 줄에 `수정`, `삭제` 버튼.
-- 추가 폼: 날(1~31 숫자 입력), 유형(라디오), 금액, 분류(유형에 맞는 분류), 메모, `추가` 버튼. `수정`을 누르면 같은 폼이 그 고정 거래 값으로 채워지고 `수정 저장`, `취소` 버튼이 나온다.
-- 클라이언트 검사: `날은 1부터 31 사이여야 합니다.`, 금액·분류 문구는 거래 폼과 같다.
+- 폼은 목록 아래에 있다. 항목: 유형(라디오, 기본값 지출), `매달 날짜`(1~31 숫자 입력), 금액, 분류(유형에 맞는 분류, 유형을 바꾸면 `분류 선택`으로 초기화), 메모.
+- 모드별 표시: 추가 모드는 제목 `고정 거래 추가`·버튼 `추가`, 수정 모드는 제목 `고정 거래 수정`·버튼 `수정 저장`과 `취소`. 요청 중에는 버튼 문구가 `저장 중...`이고 비활성화된다.
+- 클라이언트 검사 (서버 `message`와 같게 맞춘다):
+
+| 상황 | 문구 |
+|---|---|
+| 날 없음 | `날을 입력해 주세요.` |
+| 날이 1~31 정수가 아님 | `날은 1부터 31 사이여야 합니다.` |
+| 금액 없음·오류 | 거래 폼과 같음 |
+| 분류 선택 안 함 | `분류를 선택해 주세요.` |
+
+- 서버가 404 `RECURRING_NOT_FOUND`로 응답하면 폼을 추가 모드로 되돌리고 목록을 다시 불러온다.
 - 삭제 전 확인 창: `매달 1일 주거 550,000원 고정 거래를 삭제할까요? (이미 추가된 거래는 남습니다)`
 - 고정 거래가 없으면 `등록된 고정 거래가 없습니다.`
 - 29~31일 고정 거래에는 `없는 달은 말일` 안내를 덧붙인다.
@@ -421,12 +489,24 @@ type TransactionFiltersProps = {
 
 거래 내역 카드의 필터 아래에 둔다.
 
+```ts
+type RecurringApplyButtonProps = {
+  recurring: AsyncState<RecurringTransaction[]>; // 선택한 달 기준 applied 포함
+  applying: boolean;
+  onApply: (pending: number) => void;            // pending: 아직 불러오지 않은 건수
+};
+```
+
 | 상태 | 버튼 |
 |---|---|
 | 그 달에 불러올 고정 거래가 N건 | `이번 달 고정 거래 불러오기 (N건)` 활성 |
 | 모두 불러왔음 | `고정 거래를 모두 불러왔습니다` 비활성 |
 | 고정 거래가 없음 | `등록된 고정 거래 없음` 비활성 |
+| 고정 거래 목록을 불러오는 중 | `고정 거래 확인 중...` 비활성 |
+| 고정 거래 목록을 불러오지 못함 | `고정 거래를 확인하지 못했습니다` 비활성 |
 | 요청 중 | `불러오는 중...` 비활성 |
+
+- 버튼 이름은 `이번 달`이지만 지금 선택한 달에 불러온다.
 
 | 사용자 동작 | 결과 |
 |---|---|
@@ -450,17 +530,19 @@ type TransactionFiltersProps = {
 | (v0.4) `CategoryManager` 추가 버튼 | `추가 중...` |
 | (v0.5) `BackupButton` | `백업 중...` |
 | (v0.8) `CategorySpending` | `분류별 지출을 불러오는 중...` |
+| (v0.9) 검색 결과 줄 | `검색 결과 · 합계 계산 중...` |
+| (v0.10) 예산 저장·해제 | 분류 관리 카드의 모든 버튼 비활성화 |
 | (v0.11) `RecurringManager` 목록 | `고정 거래를 불러오는 중...` |
-| (v0.11) `RecurringApplyButton` | `불러오는 중...` |
+| (v0.11) `RecurringManager` 저장 버튼 | `저장 중...` |
+| (v0.11) `RecurringApplyButton` | 목록 확인 중 `고정 거래 확인 중...`, 불러오기 요청 중 `불러오는 중...` |
 
 ### 5.2 빈 목록
 
 | 위치 | 문구 |
 |---|---|
 | `TransactionList` | `2026년 10월에는 거래 내역이 없습니다.` (연·월은 `selected` 값) |
-| (v0.6) `TransactionList` 필터 적용 | `2026년 10월에는 '식비'(지출) 거래가 없습니다.` |
 | (v0.8) `CategorySpending` | `2026년 10월에는 지출이 없습니다.` |
-| (v0.9) `TransactionList` 검색·필터 적용 | `조건에 맞는 거래가 없습니다.` |
+| (v0.9) `TransactionList` 검색·필터 적용 | `조건에 맞는 거래가 없습니다.` (v0.6의 `'식비'(지출) 거래가 없습니다.`를 대체) |
 | (v0.11) `RecurringManager` | `등록된 고정 거래가 없습니다.` |
 
 ### 5.3 에러
@@ -485,9 +567,13 @@ type TransactionFiltersProps = {
 | (v0.4) `CategoryManager` 추가·수정·삭제 | 카드 위쪽에 에러 문구 | 없음 (다시 클릭) |
 | (v0.5) `BackupButton` | `alert` | 없음 (다시 클릭) |
 | (v0.8) `CategorySpending` | 목록 자리에 에러 문구 | 있음 |
+| (v0.9) 검색어 50자 초과 | 필터 아래에 에러 문구 | 없음 (검색어를 고쳐 다시 검색) |
+| (v0.9) 검색 결과 합계 불러오기 | 결과 줄 자리에 에러 문구 | 없음 (목록의 `다시 시도`가 합계도 다시 조회) |
 | (v0.10) 예산 저장·해제 | 분류 관리 카드 위쪽에 에러 문구 | 없음 |
+| (v0.10) 예산 목록 불러오기 | 표시 없음 (현재 제한, 4.14절) | 없음 |
 | (v0.11) `RecurringManager` 불러오기 | 목록 자리에 에러 문구 | 있음 |
 | (v0.11) `RecurringManager` 추가·수정·삭제 | 카드 위쪽에 에러 문구 | 없음 |
-| (v0.11) `RecurringApplyButton` | `alert` | 없음 |
+| (v0.11) `RecurringApplyButton` 상태 확인 | 버튼 문구 `고정 거래를 확인하지 못했습니다` (비활성) | 없음 (고정 거래 카드의 `다시 시도`) |
+| (v0.11) `RecurringApplyButton` 불러오기 | `alert` | 없음 |
 
 - 에러가 나도 이전에 보이던 성공 데이터를 남겨 두지 않는다. 화면이 실제 저장 상태와 다르게 보이지 않게 하기 위해서다.

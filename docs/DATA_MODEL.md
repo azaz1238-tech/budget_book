@@ -6,7 +6,9 @@
 ## 1. 개요
 
 - 데이터베이스: SQLite, 파일 `budget.db` (서버 컴퓨터)
-- 테이블: MVP는 **`transactions` 1개**, v0.4부터 **`categories`를 더해 2개**
+- 테이블: MVP는 **`transactions` 1개**, v0.4에 **`categories`**(6절), v0.10에 **`budgets`**(7절), v0.11에 **`recurring_transactions`, `recurring_applied`**(8절)를 더해 현재 **5개**
+- 모든 테이블은 서버 시작 시 `init_db()`의 `CREATE TABLE IF NOT EXISTS`로 만든다. 이전 버전의 `budget.db`도 그대로 쓸 수 있다.
+- 테이블 사이에 외래 키는 쓰지 않고, 연결 규칙은 서버 코드가 한 트랜잭션 안에서 지킨다. (TRD 11.1)
 - 분류는 MVP에서 고정 목록이므로 테이블을 만들지 않고 코드 상수로 관리한다. (PRD F-02) v0.4부터는 `categories` 테이블에 저장한다. (6절)
 - 월별 요약(수입 합계, 지출 합계, 잔액)은 저장하지 않고 조회할 때마다 `transactions`에서 계산한다.
 
@@ -334,7 +336,7 @@ type RecurringTransaction = {
   category_id: number;
   category: string;          // 응답 시 현재 분류 이름
   memo: string | null;
-  applied: boolean;          // 조회한 달에 이미 불러왔는지 (year·month를 보낸 경우)
+  applied: boolean | null;   // 조회한 달에 이미 불러왔는지. year·month 없이 조회하거나 추가·수정 응답이면 null
 };
 
 /** 고정 거래 추가·수정 요청 본문 (v0.11) */
@@ -345,4 +347,14 @@ type RecurringInput = {
   category_id: number;
   memo?: string | null;
 };
+
+/** POST /api/recurring/apply 응답 (v0.11) */
+type RecurringApplyResult = {
+  year: number;
+  month: number;
+  created: Transaction[];    // 이번에 추가된 거래
+  skipped: number;           // 이미 그 달에 불러와서 건너뛴 고정 거래 수
+};
 ```
+
+- `RecurringTransaction` 응답에는 `created_at`을 넣지 않는다. 목록 정렬에만 쓴다.

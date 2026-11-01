@@ -1,7 +1,7 @@
 # API 명세 초안 - 개인 가계부
 
 > 기준 문서: `docs/DATA_MODEL.md` (보조: `docs/PRD.md`, `docs/SPEC.md`, `docs/TRD.md`)
-> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절), v0.6 분류 필터(3.2·3.6절 쿼리), v0.8 ~ v0.11(3.11 ~ 3.19절, v0.9는 3.2·3.6절 쿼리 변경)
+> 대상 범위: MVP(v0.1 ~ v0.3), v0.4 사용자 분류 편집(3.7 ~ 3.9절), v0.5 백업(3.10절), v0.6 분류 필터(3.2·3.6절 쿼리), v0.7(서버 변경 없음), v0.8 ~ v0.11(3.11 ~ 3.19절, v0.9는 3.2·3.6절 쿼리 변경)
 
 ## 1. 공통 규칙
 
@@ -51,20 +51,25 @@
 
 - `code`: 프로그램이 구분하는 데 쓰는 고정 문자열(대문자 + 밑줄)
 - `message`: 화면에 그대로 보여 줄 수 있는 한국어 설명
-- 입력값 문제가 여러 개면 **첫 번째 문제 하나만** 돌려준다. 검사 순서는 거래가 `date` → `type` → `amount` → `category` → `memo`, 분류가 `type` → `name`이다.
+- 입력값 문제가 여러 개면 **첫 번째 문제 하나만** 돌려준다. 검사 순서는 다음과 같다.
+  - 거래: `date` → `type` → `amount` → `category` → `memo`
+  - 분류: `type` → `name`
+  - 예산: `amount`
+  - 고정 거래: `day` → `type` → `amount` → `category_id` → `memo`
+  - 고정 거래 불러오기: `year`·`month` (`INVALID_QUERY`)
 
 ### 1.3 에러 코드 목록
 
 | code | 상태 코드 | 상황 |
 |---|---|---|
 | `INVALID_JSON` | 400 | 요청 본문이 올바른 JSON 객체가 아님 |
-| `MISSING_FIELD` | 422 | 필수 필드(거래: `date`, `type`, `amount`, `category` / 분류: `type`, `name`)가 없거나 `null` |
+| `MISSING_FIELD` | 422 | 필수 필드(거래: `date`, `type`, `amount`, `category` / 분류: `type`, `name` / 예산: `amount` / 고정 거래: `day`, `type`, `amount`, `category_id`)가 없거나 `null` |
 | `INVALID_DATE` | 422 | `date`가 `YYYY-MM-DD` 형식이 아니거나 존재하지 않는 날짜 |
 | `INVALID_TYPE` | 422 | `type`이 `income`, `expense`가 아님 |
-| `INVALID_AMOUNT` | 422 | `amount`가 정수가 아니거나(소수, 문자열, 불리언) 1 미만이거나 허용 최대값 초과 |
-| `INVALID_CATEGORY` | 422 | `category`가 `type`에 해당하는 분류가 아님 (v0.4부터: 등록된 기본·사용자 분류 기준) |
+| `INVALID_AMOUNT` | 422 | 거래·예산·고정 거래의 `amount`가 정수가 아니거나(소수, 문자열, 불리언) 1 미만이거나 허용 최대값 초과 |
+| `INVALID_CATEGORY` | 422 | `category`가 `type`에 해당하는 분류가 아님 (v0.4부터: 등록된 기본·사용자 분류 기준). (v0.11) 고정 거래의 `category_id`가 정수가 아니거나, 없는 분류이거나, `type`과 유형이 다름 |
 | `INVALID_MEMO` | 422 | `memo`가 문자열이나 `null`이 아님 |
-| `INVALID_QUERY` | 422 | `year`, `month` 쿼리가 없거나 범위를 벗어남, 분류 필터·검색어 쿼리가 잘못됨 |
+| `INVALID_QUERY` | 422 | `year`, `month` 쿼리가 없거나 범위를 벗어남, 분류 필터·검색어 쿼리가 잘못됨. (v0.11) 고정 거래 목록의 `year`·`month` 중 하나만 있음, 불러오기 본문의 `year`·`month`가 없거나 범위를 벗어남 |
 | `INVALID_ID` | 422 | 경로의 `id`가 1 ~ 9,223,372,036,854,775,807(SQLite 정수 최대값) 범위의 정수가 아님 |
 | `TRANSACTION_NOT_FOUND` | 404 | 해당 `id`의 거래가 없음 |
 | `INVALID_CATEGORY_NAME` | 422 | (v0.4) 분류 `name`이 문자열이 아니거나, 앞뒤 공백 제거 후 비어 있거나 20자를 넘음 |
@@ -169,7 +174,7 @@ GET /api/categories
 |---|---|---|
 | `year` | O | 정수, 1 ~ 9999 |
 | `month` | O | 정수, 1 ~ 12 |
-| `type` | X | (v0.6 분류 필터) `income` 또는 `expense`. `category`와 함께 보내야 함 |
+| `type` | X | (v0.6 분류 필터, v0.9 유형 필터) `income` 또는 `expense`. v0.9부터 단독으로 보낼 수 있음 (v0.6에서는 `category`와 함께만) |
 | `category` | X | (v0.6 분류 필터) 분류 이름. `type`과 함께 보내야 함 |
 | `q` | X | (v0.9 검색어) 메모 검색어. 앞뒤 공백 제거 후 1~50자, 빈 값이면 무시 |
 
@@ -394,7 +399,7 @@ DELETE /api/transactions/7
 
 **쿼리 파라미터**
 
-`GET /api/transactions`와 같다. (`year` 1 ~ 9999, `month` 1 ~ 12, 모두 필수 / v0.6: 선택 `type`·`category`)
+`GET /api/transactions`와 같다. (`year` 1 ~ 9999, `month` 1 ~ 12, 모두 필수 / 선택: `type`·`category`(v0.6), `q`(v0.9))
 
 - (v0.6) `type`과 `category`를 보내면 그 분류의 거래만으로 합계를 계산한다. 예: 지출 `식비`로 거르면 `income`은 0, `balance`는 `-expense`다.
 - (v0.9) `type` 단독, `q`도 `GET /api/transactions`와 같은 규칙으로 받아, 걸러진 거래만으로 합계를 계산한다.
@@ -439,7 +444,7 @@ GET /api/summary?year=2026&month=10
 | `year` 또는 `month` 없음 | 422 | `INVALID_QUERY` | `조회할 연도와 월을 입력해 주세요.` |
 | `month`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `월은 1부터 12 사이여야 합니다.` |
 | `year`가 범위 밖·정수 아님 | 422 | `INVALID_QUERY` | `연도는 1부터 9999 사이여야 합니다.` |
-| (v0.6) 분류 필터 오류 | 422 | `INVALID_QUERY` | `GET /api/transactions`와 같음 |
+| (v0.6·v0.9) 분류 필터·검색어 오류 | 422 | `INVALID_QUERY` | `GET /api/transactions`와 같음 |
 | DB 읽기 실패 | 500 | `DATABASE_ERROR` | `월별 요약을 불러오지 못했습니다.` |
 
 ---
@@ -588,7 +593,7 @@ Content-Disposition: attachment; filename="budget-backup-2026-10-30-1530.db"
 
 ### 3.11 `GET /api/summary/categories` — 분류별 지출 합계 (v0.8)
 
-선택한 달의 지출을 분류별로 합친다. 수입은 포함하지 않는다. 거래 목록의 필터 쿼리는 받지 않는다(항상 그 달 전체).
+선택한 달의 지출을 분류별로 합친다. 수입은 포함하지 않는다. 거래 목록의 필터 쿼리(`type`, `category`, `q`)는 받지 않는다. 보내도 무시하고 항상 그 달 전체로 계산한다.
 
 **쿼리:** `year`(1~9999), `month`(1~12) 필수
 
@@ -703,10 +708,11 @@ GET /api/recurring?year=2026&month=10
 
 - `year`·`month`를 보내지 않으면 `applied`는 `null`이다.
 
-| 상황 | 상태 코드 | code |
-|---|---|---|
-| `year`·`month` 중 하나만 있음·범위 밖 | 422 | `INVALID_QUERY` |
-| DB 읽기 실패 | 500 | `DATABASE_ERROR` |
+| 상황 | 상태 코드 | code | 응답 예시 `message` |
+|---|---|---|---|
+| `year`·`month` 중 하나만 있음 | 422 | `INVALID_QUERY` | `조회할 연도와 월을 입력해 주세요.` |
+| `year`·`month` 범위 밖 | 422 | `INVALID_QUERY` | `GET /api/summary`와 같음 |
+| DB 읽기 실패 | 500 | `DATABASE_ERROR` | `고정 거래를 불러오지 못했습니다.` |
 
 ---
 
@@ -750,7 +756,9 @@ GET /api/recurring?year=2026&month=10
 | `id` 형식 오류 | 422 | `INVALID_ID` |
 | 본문 오류 | 400 / 422 | 3.16과 같음 |
 | 없는 고정 거래 | 404 | `RECURRING_NOT_FOUND` (`이미 삭제되었거나 없는 고정 거래입니다.`) |
-| DB 쓰기 실패 | 500 | `DATABASE_ERROR` |
+| DB 쓰기 실패 | 500 | `DATABASE_ERROR` (`고정 거래를 수정하지 못했습니다.`) |
+
+- 처리 순서: `id` 검사 → 본문 검사 → 고정 거래 존재 확인
 
 ---
 
@@ -762,7 +770,7 @@ GET /api/recurring?year=2026&month=10
 |---|---|---|
 | `id` 형식 오류 | 422 | `INVALID_ID` |
 | 없는 고정 거래 | 404 | `RECURRING_NOT_FOUND` |
-| DB 쓰기 실패 | 500 | `DATABASE_ERROR` |
+| DB 쓰기 실패 | 500 | `DATABASE_ERROR` (`고정 거래를 삭제하지 못했습니다.`) |
 
 ---
 
@@ -802,8 +810,9 @@ GET /api/recurring?year=2026&month=10
 ## 4. 구현 참고
 
 - FastAPI는 기본적으로 `{"detail": ...}` 형식으로 에러를 돌려준다. 1.2절 형식으로 통일하려면 다음 예외 처리기를 등록한다.
-  - `RequestValidationError` → 400 `INVALID_JSON` 또는 422 각 코드로 변환
-  - `HTTPException`(404, 405 등) → `NOT_FOUND`, `METHOD_NOT_ALLOWED`, `TRANSACTION_NOT_FOUND`
-  - `sqlite3.Error` → 500 `DATABASE_ERROR`
+  - `RequestValidationError` → 400 `INVALID_JSON` 또는 422 각 코드로 변환 (경로 오류는 `INVALID_ID`, 쿼리 오류는 `INVALID_QUERY`)
+  - `HTTPException`(없는 경로 404, 지원하지 않는 메서드 405) → `NOT_FOUND`, `METHOD_NOT_ALLOWED`
+  - 엔드포인트가 정한 에러(`TRANSACTION_NOT_FOUND`, `CATEGORY_IN_USE` 등) → 앱의 `ApiError` 예외로 상태 코드·`code`·`message`를 그대로 응답
+  - `sqlite3.Error` → 500 `DATABASE_ERROR` (엔드포인트 안의 DB 오류는 작업별 문구, 예: `거래 내역을 저장하지 못했습니다.`)
   - 그 밖의 `Exception` → 500 `INTERNAL_ERROR`
 - FastAPI가 자동으로 만드는 `/docs` 화면의 에러 예시는 기본 형식으로 보일 수 있다. 실제 응답은 이 문서를 따른다.

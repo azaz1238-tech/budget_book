@@ -35,7 +35,7 @@
 | 웹 서버 | Uvicorn | FastAPI 앱을 실제로 실행해 브라우저 요청을 받아 주는 프로그램으로, FastAPI 공식 문서가 기본으로 쓰는 서버다. |
 | 입력 검증 | Pydantic | "금액은 1 이상의 정수" 같은 규칙을 클래스로 적어 두면 잘못된 요청을 자동으로 거절해 준다(FastAPI에 포함). |
 | 데이터베이스 | SQLite | 설치나 별도 DB 서버 없이 `budget.db` 파일 하나로 동작해서, 혼자 쓰는 앱에 가장 간단하다. |
-| DB 접근 | Python 표준 `sqlite3` 모듈 | Python에 기본 포함되어 추가 설치가 필요 없고, 테이블이 1~2개뿐이라 ORM 없이 SQL로 충분하다. |
+| DB 접근 | Python 표준 `sqlite3` 모듈 | Python에 기본 포함되어 추가 설치가 필요 없고, 테이블이 몇 개(현재 5개)뿐이고 쿼리가 단순해 ORM 없이 SQL로 충분하다. |
 | 화면 | HTML + CSS + 순수 JavaScript | 빌드 도구나 프레임워크 없이 브라우저가 바로 실행할 수 있어서, 화면 하나짜리 앱에 배울 것이 가장 적다. |
 | 화면 ↔ 서버 통신 | 브라우저 `fetch` API | 브라우저에 기본 내장된 기능으로, 버튼을 누르면 페이지 이동 없이 서버에 JSON을 보내고 받을 수 있다. |
 | 정적 파일 제공 | FastAPI `StaticFiles` | HTML/JS/CSS 파일을 같은 서버에서 내려 주므로 서버를 하나만 실행하면 된다. |
@@ -43,29 +43,30 @@
 
 ### 사용하지 않는 것과 이유
 
-- **SQLAlchemy 등 ORM**: 테이블 1~2개, 쿼리 몇 개뿐이라 배울 양에 비해 이득이 적다.
+- **SQLAlchemy 등 ORM**: 테이블 5개, 단순한 쿼리뿐이라 배울 양에 비해 이득이 적다.
 - **React/Vue 등 프론트엔드 프레임워크**: 화면이 하나이고 빌드 과정이 추가되어 MVP에 과하다.
 - **템플릿 엔진(Jinja2)**: 화면은 정적 HTML로 두고 데이터는 JS가 API로 받아 그리므로 필요 없다.
 
-## 3. 폴더 구조 (제안)
+## 3. 폴더 구조
 
 ```
 budget_book/
 ├─ app/
-│  ├─ main.py          # FastAPI 앱 생성, API 라우트, 정적 파일 연결
-│  ├─ db.py            # SQLite 연결, 테이블 생성, 쿼리 함수
-│  ├─ schemas.py       # Pydantic 요청/응답 모델
-│  └─ categories.py    # 고정 분류 목록
+│  ├─ main.py          # FastAPI 앱 생성, API 라우트와 SQL 쿼리, 에러 처리, 정적 파일 연결
+│  ├─ db.py            # SQLite 연결, 테이블 생성(init_db), 분류 존재 확인 함수
+│  ├─ schemas.py       # Pydantic 요청 본문 모델과 검증기
+│  └─ categories.py    # 기본 분류 목록, 유형 이름, 분류 이름 최대 길이
 ├─ static/
-│  ├─ index.html       # 화면 구조
-│  ├─ app.js           # 버튼 처리, fetch 호출, 목록·요약 그리기
+│  ├─ index.html       # 화면 구조 (카드 자리만 두고 내용은 app.js가 그림)
+│  ├─ app.js           # 컴포넌트 함수, 상태, fetch 호출
 │  └─ style.css        # 스타일 (수입 파란색, 지출 빨간색)
 ├─ tests/
-│  ├─ test_api.py      # API 테스트
+│  ├─ test_api.py      # API 테스트 (TEST_CASES 1장)
 │  └─ test_sample.py   # 샘플 테스트 (1 + 1 = 2)
-├─ docs/
+├─ docs/               # 기획·설계 문서
 ├─ requirements.txt
-├─ README.md           # 실행 방법, budget.db 수동 백업 안내
+├─ CLAUDE.md           # 작업 규칙
+├─ README.md           # 실행 방법, 백업·수동 복원 안내
 └─ budget.db           # 실행 시 자동 생성 (버전 관리 제외)
 ```
 
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 ```
 
+- MVP 테이블이다. v0.4 이후 추가된 테이블은 11.2절(`categories`), 14.4절(`budgets`), 14.5절(`recurring_transactions`, `recurring_applied`)과 `docs/DATA_MODEL.md`를 따른다.
 - `date`를 `YYYY-MM-DD` 문자열로 저장하면 문자열 비교만으로 날짜 순서와 월 범위 검색이 정확하다.
 - `amount`, `type`은 DB에도 `CHECK` 제약을 걸어, 코드 실수가 있어도 잘못된 값이 저장되지 않게 한다.
 - `category`의 유효성(유형별 허용 목록)은 서버 코드에서 검사한다. v0.4에서 분류 테이블로 바꿀 때 DB 제약 변경 없이 확장하기 위해서다.
@@ -121,6 +123,9 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 | PUT | `/api/transactions/{id}` | 거래 수정 | 200 + 수정된 거래 |
 | DELETE | `/api/transactions/{id}` | 거래 영구 삭제 | 204 |
 | GET | `/api/summary?year=2026&month=10` | 해당 월 수입·지출 합계, 잔액 | 200 |
+
+- MVP API다. v0.4 이후 추가·변경된 API는 11.4절(분류), 12.3절(백업), 13.1·14.3절(필터·검색 쿼리), 14.2·14.4·14.5절(분류별 지출, 예산, 고정 거래)에 있고, 전체 목록과 상세는 `docs/API_SPEC.md`를 따른다.
+- `GET /api/categories`의 응답은 v0.4부터 분류 객체 배열이다(11.4절).
 
 ### 5.1 요청 본문 (등록·수정 공통)
 
@@ -160,10 +165,10 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 |---|---|---|
 | `date` | 필수, 실제 존재하는 날짜 | Pydantic `date` 타입 |
 | `type` | `income` 또는 `expense` | `Literal["income", "expense"]` |
-| `amount` | 필수, 정수, 1 이상 | `StrictInt` + `ge=1` (`12.5`, `"1000"`, `true` 거절) |
-| `category` | 선택한 `type`의 고정 분류 중 하나 | Pydantic 모델 검증기에서 `categories.py`와 비교 |
+| `amount` | 필수, 정수, 1 이상, 9,007,199,254,740,991 이하 | `StrictInt` + `ge=1`, `le=MAX_AMOUNT` (`12.5`, `"1000"`, `true` 거절) |
+| `category` | 선택한 `type`의 분류 중 하나 | Pydantic 모델 검증기에서 확인. MVP는 `categories.py` 상수, v0.4부터 `categories` 테이블의 `(type, name)` |
 | `memo` | 선택, 앞뒤 공백 제거 후 빈 문자열이면 `null` | 검증기에서 정리 |
-| `year`, `month` | `month`는 1~12 | Query 파라미터 검증 |
+| `year`, `month` | `year`는 1~9999, `month`는 1~12 | Query 파라미터 검증 |
 
 ### 5.4 오류 응답
 
@@ -172,6 +177,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 | 요청 본문이 올바른 JSON이 아님 | 400 | 폼 근처에 오류 메시지 표시 |
 | 입력값 검증 실패 | 422 | 어떤 항목이 잘못됐는지 폼 근처에 표시 |
 | 없는 `id` 수정·삭제 | 404 | "이미 삭제되었거나 없는 내역입니다" 표시 후 목록 새로고침 |
+| (v0.4) 분류 중복·사용 중·기본 분류 변경 | 409 | 분류 관리 카드 위쪽에 서버 메시지 표시 |
 | DB 오류 등 서버 오류 | 500 | 오류 메시지를 화면에 표시 (숨기지 않음) |
 | 서버에 연결 불가 | (fetch 실패) | "서버에 연결할 수 없습니다" 표시 |
 
@@ -187,7 +193,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 - 금액 표시: `Number.toLocaleString('ko-KR') + '원'` → `12,500원`
 - 수정: 목록의 수정 버튼을 누르면 입력 폼에 값을 채우고, 저장 시 `PUT`을 호출한다.
 - 삭제: `window.confirm("2026-10-30 식비 12,500원 내역을 삭제할까요?")`에서 확인한 경우에만 `DELETE`를 호출한다.
-- 등록·수정·삭제·월 변경 후에는 항상 서버에서 목록과 요약을 다시 받아 그린다. 화면이 서버 데이터와 어긋나지 않게 하기 위해서다.
+- 등록·수정·삭제·월 변경 후에는 항상 서버에서 목록과 요약을 다시 받아 그린다. 화면이 서버 데이터와 어긋나지 않게 하기 위해서다. (v0.8 이후에는 분류별 지출, 검색 결과 합계, 고정 거래 상태도 함께 다시 받는다.)
+- v0.4 이후 추가된 카드(분류 관리, 백업 버튼, 월 이동, 분류별 지출, 검색·필터, 예산, 고정 거래)는 11 ~ 14절과 `docs/COMPONENT_SPEC.md`를 따른다. 카드 순서: 월별 요약 → 분류별 지출 → 입력 폼 → 분류 관리 → 고정 거래 → 거래 내역.
 
 ## 7. 버튼을 누른 뒤 DB에 저장되기까지의 흐름
 
@@ -207,12 +214,12 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 | 8 | 서버 (FastAPI) | 주소(`POST /api/transactions`)를 보고 등록 함수를 찾는다. |
 | 9 | 서버 (Pydantic) | JSON을 요청 모델로 변환하면서 날짜 형식, 유형, 정수 금액, 1 이상, 유형별 분류를 검사한다. 실패하면 DB에 가지 않고 422 응답을 돌려준다. |
 | 10 | 서버 (`main.py`) | 서버가 현재 시각으로 `created_at`을 만든다. |
-| 11 | 서버 (`db.py`) | `budget.db`에 연결하고 `INSERT INTO transactions (...) VALUES (?, ?, ?, ?, ?, ?)`를 실행한다. |
+| 11 | 서버 (`main.py`, `db.py`) | `db.py`의 `connect()`로 `budget.db`에 연결하고, `main.py`가 `INSERT INTO transactions (...) VALUES (?, ?, ?, ?, ?, ?)`를 실행한다. |
 | 12 | 서버 (SQLite) | SQLite가 `CHECK` 제약을 한 번 더 확인하고 행을 추가한 뒤, 커밋하면 파일에 저장된다. 이 시점부터 서버를 재시작해도 데이터가 남는다. |
-| 13 | 서버 (`db.py`) | 새로 생긴 `id`로 저장된 행을 다시 읽는다. |
+| 13 | 서버 (`main.py`) | 새로 생긴 `id`로 저장된 행을 다시 읽는다. |
 | 14 | 서버 → 브라우저 | 저장된 거래를 JSON으로 만들어 `201 Created`로 응답한다. |
 | 15 | 브라우저 (`app.js`) | 응답이 성공이면 폼을 비우고, 실패(422/500/연결 실패)면 오류 메시지를 표시한다. 어느 경우든 저장 버튼을 다시 활성화한다. |
-| 16 | 브라우저 (`app.js`) | 성공한 경우 `GET /api/transactions`, `GET /api/summary`를 다시 호출해 목록과 월별 요약을 새로 그린다. |
+| 16 | 브라우저 (`app.js`) | 성공한 경우 `GET /api/transactions`, `GET /api/summary`를 다시 호출해 목록과 월별 요약을 새로 그린다. (v0.8 이후: 분류별 지출, 검색 결과 합계, 고정 거래 상태도 함께) |
 
 ### 7.2 흐름 그림
 
@@ -270,11 +277,11 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 .venv\Scripts\python -m uvicorn app.main:app --reload
 
 # 테스트
-.venv\Scripts\python -m pytest
+.venv\Scripts\python -m pytest tests
 ```
 
 - 서버는 기본적으로 `127.0.0.1`(내 컴퓨터)에서만 접속 가능하게 실행한다. 로그인이 없으므로 외부에 공개하지 않는다.
-- 백업은 서버를 끈 상태에서 `budget.db` 파일을 복사한다. 이 안내는 README에 적는다.
+- 백업은 화면 상단의 `백업 다운로드` 버튼(v0.5, 12절)으로 받는다. 수동 복원 방법은 README에 적는다.
 
 ## 10. 범위 밖 (PRD와 동일)
 
@@ -316,7 +323,7 @@ CREATE TABLE IF NOT EXISTS categories (
 | 분류 목록 | `SELECT ... FROM categories ORDER BY is_default DESC, id` → 기본 분류가 먼저, 사용자 분류는 추가한 순서 |
 | 분류 추가 | 같은 `(type, name)`이 있으면 거절, 없으면 `INSERT` (`is_default = 0`) |
 | 이름 수정 | 기본 분류면 거절 → 새 이름 중복이면 거절 → `UPDATE categories SET name = 새 이름` + `UPDATE transactions SET category = 새 이름 WHERE type = ? AND category = 옛 이름` |
-| 분류 삭제 | 기본 분류면 거절 → `SELECT COUNT(*) FROM transactions WHERE type = ? AND category = ?`가 1 이상이면 건수와 함께 거절 → 0이면 `DELETE` |
+| 분류 삭제 | 기본 분류면 거절 → `SELECT COUNT(*) FROM transactions WHERE type = ? AND category = ?`가 1 이상이면 건수와 함께 거절 → 0이면 `DELETE` (v0.10: 그 분류의 예산도 함께 삭제, v0.11: 고정 거래가 쓰는 분류도 건수와 함께 거절 — 14.4·14.5절) |
 | 거래 등록·수정 | 분류 검사를 `categories.py` 상수 대신 `categories` 테이블에서 `(type, name)`이 있는지로 바꾼다 |
 
 - 이름 수정에서 두 `UPDATE` 중 하나라도 실패하면 둘 다 롤백되어, 분류 이름과 거래의 분류가 어긋나지 않는다.
@@ -430,7 +437,7 @@ ORDER BY date DESC, created_at DESC, id DESC
 ### 13.3 화면
 
 - 거래 내역 카드 제목 아래에 `분류 필터` 선택 상자(`전체`, 지출 분류 묶음, 수입 분류 묶음)를 둔다.
-- 필터를 고르면 목록과 함께 `식비(지출) · 3건 · 합계 62,500원` 같은 한 줄을 보여 준다.
+- 필터를 고르면 목록과 함께 `식비(지출) · 3건 · 합계 62,500원` 같은 한 줄을 보여 준다. (v0.9에서 검색·필터로 바뀌어 지금은 유형·분류 선택 상자와 `검색 결과 · 3건 · 지출 62,500원` 형식이다. 14.3절, COMPONENT_SPEC 4.13절)
 - 분류 목록을 다시 불러왔을 때 필터의 분류가 없어졌으면 `전체`로 돌린다. 필터의 분류 이름을 수정하면 필터도 새 이름으로 바꾼다.
 
 ### 13.4 테스트 계획 추가
@@ -461,7 +468,7 @@ ORDER BY date DESC, created_at DESC, id DESC
 |---|---|
 | `GET /api/summary/categories?year&month`를 추가한다 | DB의 `GROUP BY`로 분류별 합계를 계산해 화면이 거래 전체를 받아 더하지 않아도 된다. |
 | 스키마·인덱스는 바꾸지 않는다 | 한 달 범위를 기존 `date` 인덱스로 찾은 뒤 묶기만 하면 된다. |
-| 정렬(합계 큰 순, 같으면 이름 순)은 SQL에서 한다 | 화면과 테스트가 같은 순서를 기대할 수 있다. |
+| 정렬(합계 큰 순, 같으면 이름 순)은 서버에서 한다 | 화면과 테스트가 같은 순서를 기대할 수 있다. v0.10부터 지출 없는 예산 분류를 합친 뒤 정렬해야 하므로 SQL이 아니라 Python에서 정렬한다. |
 | 응답에 그 달 지출 합계(`total`)를 함께 보낸다 | 화면이 비율(합계 ÷ total)과 막대 길이를 바로 계산할 수 있다. |
 | 막대는 CSS `width: N%`로 그린다 | 차트 라이브러리 없이 충분하고, 외부 파일을 늘리지 않는다. |
 
@@ -470,7 +477,7 @@ SELECT category, SUM(amount) AS amount, COUNT(*) AS count
 FROM transactions
 WHERE date BETWEEN ? AND ? AND type = 'expense'
 GROUP BY category
-ORDER BY amount DESC, category
+-- 정렬: 예산 분류(14.4절)를 합친 뒤 Python에서 (-amount, category) 순으로
 ```
 
 ### 14.3 v0.9 검색·필터
@@ -479,7 +486,7 @@ ORDER BY amount DESC, category
 |---|---|
 | `GET /api/transactions`, `GET /api/summary`에 선택 쿼리 `q`(메모 검색어)를 더하고 `type`만 단독으로 보내는 것을 허용한다 | 새 API 없이 기존 정렬·월 범위·합계 규칙을 재사용하고, 쿼리를 안 보내는 기존 호출은 그대로 동작한다. |
 | `category`는 `type`이 있을 때만 받는다 | 같은 이름이 지출·수입에 모두 있을 수 있다(v0.6 규칙 유지). |
-| 메모 검색은 `memo LIKE '%' \|\| ? \|\| '%' ESCAPE '\'`로 하고 `%`, `_`, `\`는 이스케이프한다 | 사용자가 입력한 특수 문자가 와일드카드로 해석되지 않게 한다. SQLite `LIKE`는 영문 대소문자를 구분하지 않는다. |
+| 메모 검색은 `memo LIKE ? ESCAPE '\'`(값은 `%검색어%`)로 하고 검색어의 `%`, `_`, `\`는 이스케이프한다 | 사용자가 입력한 특수 문자가 와일드카드로 해석되지 않게 한다. SQLite `LIKE`는 영문 대소문자를 구분하지 않는다. |
 | 인덱스는 추가하지 않는다 | 한 달 범위로 먼저 줄인 뒤 메모를 비교하므로 거래 수가 적다. |
 
 - v0.6에서 422였던 "`type`만 보낸 요청"은 v0.9부터 200(유형 필터)이 된다. 관련 테스트(`API-FLT-E01`의 type-only)를 함께 바꾼다.
@@ -501,7 +508,7 @@ ORDER BY amount DESC, category
 |---|---|
 | 고정 거래 틀은 `recurring_transactions` 테이블에 둔다 | 날·유형·금액·분류·메모를 저장해 두고 달마다 거래로 복사한다. |
 | 틀의 분류는 `categories.id`로 연결한다 | 분류 이름을 바꿔도 틀이 따라간다. |
-| 불러온 기록을 `recurring_applied(recurring_id, year_month)` 테이블에 `UNIQUE`로 남긴다 | 같은 틀이 같은 달에 두 번 들어가는 것을 DB가 막는다. 불러온 거래를 지워도 다시 생기지 않는다. `transactions` 테이블은 바꾸지 않는다. |
+| 불러온 기록을 `recurring_applied(recurring_id, year_month)` 테이블에 복합 `PRIMARY KEY`로 남긴다 | 같은 틀이 같은 달에 두 번 들어가는 것을 DB가 막는다. 불러온 거래를 지워도 다시 생기지 않는다. `transactions` 테이블은 바꾸지 않는다. |
 | 불러오기는 `POST /api/recurring/apply` 한 번에 한 트랜잭션으로 처리한다 | 거래 추가와 기록 추가가 함께 성공하거나 함께 취소되어 반쯤 들어가는 일이 없다. |
 | 날짜는 `min(틀의 날, 그 달 말일)` | 31일 틀도 2월·4월에 들어갈 수 있다. |
 | 자동 스케줄러는 만들지 않는다 | 서버가 꺼져 있던 달의 처리, 중복 실행 같은 문제가 생기지 않는다. |
