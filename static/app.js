@@ -8,6 +8,16 @@ const MAX_KEYWORD_LENGTH = 50;
 const MIN_MONTH = { year: 1, month: 1 };
 const MAX_MONTH = { year: 9999, month: 12 };
 const EMPTY_FILTERS = { type: null, category: null, q: null };
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const QUICK_AMOUNTS = [
+  { label: "+1천", value: 1000 },
+  { label: "+5천", value: 5000 },
+  { label: "+1만", value: 10000 },
+  { label: "+5만", value: 50000 },
+];
+const UNDO_DURATION_MS = 5000;
+const TOAST_DURATION_MS = 4000;
+const WARN_RATIO = 0.8;
 
 // ---------------------------------------------------------------------------
 // 공통 도구
@@ -19,6 +29,12 @@ function pad2(n) {
 
 function todayString() {
   const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function yesterdayString() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
@@ -45,10 +61,44 @@ function percent(part, whole) {
   return whole > 0 ? Math.round((part / whole) * 100) : 0;
 }
 
-/** 금액 입력칸의 글자를 숫자로 바꾼다. 비었으면 null. */
+/** 수입은 +, 지출은 −를 붙여 표시한다. 색을 구분하기 어려운 사용자도 알아볼 수 있게 한다. */
+function formatSignedWon(type, amount) {
+  return `${type === "income" ? "+" : "−"}${formatWon(amount)}`;
+}
+
+/** 금액 입력칸의 글자를 숫자로 바꾼다. 비었으면 null. 콤마는 무시한다. */
 function parseAmount(text) {
-  const trimmed = String(text).trim();
+  const trimmed = String(text).replace(/,/g, "").trim();
   return trimmed === "" ? null : Number(trimmed);
+}
+
+/** 숫자만 있으면 천 단위 콤마를 넣는다. 다른 글자가 섞이면 저장할 때 오류로 안내하도록 그대로 둔다. */
+function formatAmountText(text) {
+  const raw = String(text);
+  const digits = raw.replace(/,/g, "");
+  return /^\d+$/.test(digits) ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : raw;
+}
+
+/** 입력하는 동안 콤마를 보여 주는 금액 입력칸. 커서는 오른쪽 숫자 개수를 기준으로 유지한다. */
+function AmountInput(attrs) {
+  const { value, ...rest } = attrs;
+  const input = el("input", {
+    type: "text",
+    inputmode: "numeric",
+    autocomplete: "off",
+    value: value === null || value === undefined ? "" : formatAmountText(value),
+    ...rest,
+  });
+  input.addEventListener("input", () => {
+    const digitsAfterCaret = input.value.slice(input.selectionStart).replace(/,/g, "").length;
+    input.value = formatAmountText(input.value);
+    let caret = input.value.length;
+    for (let seen = 0; caret > 0 && seen < digitsAfterCaret; caret -= 1) {
+      if (input.value[caret - 1] !== ",") seen += 1;
+    }
+    input.setSelectionRange(caret, caret);
+  });
+  return input;
 }
 
 /** 금액 클라이언트 검사. 문구는 서버 message와 같다. */
@@ -126,15 +176,15 @@ async function request(method, url, body) {
   }
 }
 
-function fallbackBackupFilename() {
+function fileTimestamp() {
   const d = new Date();
   const date = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  return `budget-backup-${date}-${pad2(d.getHours())}${pad2(d.getMinutes())}.db`;
+  return `${date}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
 }
 
-/** 백업 파일을 받아 { blob, filename }으로 돌려준다. 파일 이름은 응답 헤더를 따른다. */
-async function requestBackup() {
-  const res = await fetchOrThrow("/api/backup", { method: "GET" });
+/** 파일을 받아 { blob, filename }으로 돌려준다. 파일 이름은 응답 헤더를 따른다. */
+async function requestFile(url, fallbackFilename) {
+  const res = await fetchOrThrow(url, { method: "GET" });
   const match = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "");
   let blob;
   try {
@@ -142,7 +192,17 @@ async function requestBackup() {
   } catch {
     throw CONNECTION_ERROR;
   }
-  return { blob, filename: match ? match[1] : fallbackBackupFilename() };
+  return { blob, filename: match ? match[1] : fallbackFilename };
+}
+
+/** 백업 파일을 요청 본문 그대로 보낸다 (TRD 15.4절). */
+async function requestRestore(file) {
+  const res = await fetchOrThrow("/api/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  return res.json();
 }
 
 function saveBlob(blob, filename) {
@@ -184,41 +244,81 @@ const api = {
   updateRecurring: (id, input) => request("PUT", `/api/recurring/${id}`, input),
   deleteRecurring: (id) => request("DELETE", `/api/recurring/${id}`),
   applyRecurring: (selected) => request("POST", "/api/recurring/apply", selected),
-  downloadBackup: requestBackup,
+  restoreTransaction: (transaction) => request("POST", "/api/transactions/restore", transaction),
+  downloadBackup: () => requestFile("/api/backup", `budget-backup-${fileTimestamp()}.db`),
+  downloadCsv: () => requestFile("/api/export/transactions.csv", `budget-transactions-${fileTimestamp()}.csv`),
+  restoreBackup: requestRestore,
 };
 
 // ---------------------------------------------------------------------------
 // StatusMessage
 // ---------------------------------------------------------------------------
 
-function StatusMessage({ kind, message, onRetry }) {
+function StatusMessage({ kind, message, onRetry, action }) {
   return el("div", { className: `status status-${kind}`, role: kind === "error" ? "alert" : "status" }, [
     el("p", { text: message }),
     onRetry ? el("button", { type: "button", className: "button-secondary", text: "다시 시도", onClick: onRetry }) : null,
+    action ? el("button", { type: "button", className: "button-primary", text: action.label, onClick: action.onClick }) : null,
   ]);
 }
 
 // ---------------------------------------------------------------------------
-// BackupButton (v0.5)
+// DataManager (v0.5 백업, v1.0 CSV·복원)
 // ---------------------------------------------------------------------------
 
-function renderBackupButton(container, { busy, onBackup }) {
-  container.replaceChildren(
+function renderDataManager(container, { busy, onBackup, onExportCsv, onRestoreFile }) {
+  const fileInput = el("input", { type: "file", accept: ".db", className: "restore-input", hidden: true, "aria-label": "복원할 백업 파일" });
+  fileInput.addEventListener("change", () => {
+    const [file] = fileInput.files;
+    if (file) onRestoreFile(file);
+  });
+  const button = (className, idle, working, kind, onClick) =>
     el("button", {
       type: "button",
-      className: "button-secondary backup-button",
-      text: busy ? "백업 중..." : "백업 다운로드",
-      disabled: busy,
-      onClick: onBackup,
-    }),
+      className: `button-secondary ${className}`,
+      text: busy === kind ? working : idle,
+      disabled: busy !== null,
+      onClick,
+    });
+  container.replaceChildren(
+    el("h2", { text: "데이터" }),
+    el("p", { className: "data-note", text: "백업 파일은 다른 드라이브나 클라우드 등 안전한 곳에 보관하세요. 복원하면 지금 데이터의 사본이 서버 폴더에 남습니다." }),
+    el("div", { className: "data-actions" }, [
+      button("backup-button", "백업 다운로드", "백업 중...", "backup", onBackup),
+      button("csv-button", "CSV 내보내기", "내보내는 중...", "csv", onExportCsv),
+      button("restore-button", "백업 복원", "복원 중...", "restore", () => fileInput.click()),
+      fileInput,
+    ]),
   );
 }
 
 // ---------------------------------------------------------------------------
-// MonthSelector / MonthNavigator (v0.7)
+// TabBar (v1.0)
 // ---------------------------------------------------------------------------
 
-function renderMonthSelector(container, { value, disabled, onChange }) {
+function renderTabBar(container, { tab, onChange }) {
+  const button = (value, text) =>
+    el("button", {
+      type: "button",
+      role: "tab",
+      className: `tab-button${tab === value ? " is-active" : ""}`,
+      "aria-selected": tab === value ? "true" : "false",
+      text,
+      onClick: () => onChange(value),
+    });
+  container.replaceChildren(button("list", "내역"), button("stats", "통계"), button("settings", "설정"));
+}
+
+// ---------------------------------------------------------------------------
+// MonthNavigator / MonthSelector (v0.7, v1.0 글자와 화살표)
+// ---------------------------------------------------------------------------
+
+function renderMonthSelector(container, { value, open, disabled, onChange }) {
+  container.hidden = !open;
+  if (!open) {
+    container.replaceChildren();
+    return;
+  }
   // <input type="month">는 연도를 4자리로 받는다. (예: 0001-01)
   const current = `${String(value.year).padStart(4, "0")}-${pad2(value.month)}`;
   const input = el("input", { type: "month", value: current, disabled, "aria-label": "조회할 연·월" });
@@ -234,19 +334,33 @@ function renderMonthSelector(container, { value, disabled, onChange }) {
   container.replaceChildren(input);
 }
 
-function renderMonthNavigator(container, { value, today, disabled, onChange }) {
-  const button = (text, target, atLimit) =>
+function renderMonthNavigator(container, { value, today, disabled, pickerOpen, onChange, onTogglePicker }) {
+  const arrow = (text, label, target, atLimit) =>
     el("button", {
       type: "button",
       className: "button-secondary nav-button",
       text,
+      "aria-label": label,
       disabled: disabled || atLimit,
       onClick: () => onChange(target),
     });
   container.replaceChildren(
-    button("이전 달", shiftMonth(value, -1), sameMonth(value, MIN_MONTH)),
-    button("다음 달", shiftMonth(value, 1), sameMonth(value, MAX_MONTH)),
-    button("이번 달", today, sameMonth(value, today)),
+    ...[
+      arrow("‹", "이전 달", shiftMonth(value, -1), sameMonth(value, MIN_MONTH)),
+      el("button", {
+        type: "button",
+        className: "month-label",
+        text: `${value.year}년 ${value.month}월`,
+        "aria-expanded": pickerOpen ? "true" : "false",
+        title: "연·월 입력",
+        disabled,
+        onClick: onTogglePicker,
+      }),
+      arrow("›", "다음 달", shiftMonth(value, 1), sameMonth(value, MAX_MONTH)),
+      sameMonth(value, today)
+        ? null
+        : el("button", { type: "button", className: "button-secondary today-button", text: "이번 달", disabled, onClick: () => onChange(today) }),
+    ].filter(Boolean),
   );
 }
 
@@ -275,7 +389,7 @@ function renderSummaryPanel(container, { summary, onRetry }) {
 // CategorySpending (v0.8, v0.10 예산)
 // ---------------------------------------------------------------------------
 
-function renderCategorySpending(container, { spending, selected, onRetry }) {
+function renderCategorySpending(container, { spending, selected, onRetry, onSelect }) {
   let body;
   if (spending.status === "loading") {
     body = StatusMessage({ kind: "loading", message: "분류별 지출을 불러오는 중..." });
@@ -285,34 +399,38 @@ function renderCategorySpending(container, { spending, selected, onRetry }) {
     body = StatusMessage({ kind: "empty", message: `${selected.year}년 ${selected.month}월에는 지출이 없습니다.` });
   } else {
     const { total, items } = spending.data;
-    body = el("ul", { className: "spending-list" }, items.map((item) => SpendingItem({ item, total })));
+    body = el("ul", { className: "spending-list" }, items.map((item) => SpendingItem({ item, total, onSelect })));
   }
   container.replaceChildren(el("h2", { text: "분류별 지출" }), body);
 }
 
-function SpendingItem({ item, total }) {
+function SpendingItem({ item, total, onSelect }) {
   const hasBudget = item.budget !== null;
   const over = hasBudget && item.remaining < 0;
+  const warn = hasBudget && !over && item.amount / item.budget >= WARN_RATIO;
+  const level = over ? " is-over" : warn ? " is-warn" : "";
   // 예산이 있으면 예산 대비, 없으면 그 달 지출 합계 대비 막대 길이
   const ratio = hasBudget ? Math.min(item.amount / item.budget, 1) : total > 0 ? item.amount / total : 0;
   let budgetLine = null;
   if (hasBudget) {
     const rest = over ? `${formatWon(-item.remaining)} 초과` : `${formatWon(item.remaining)} 남음`;
     budgetLine = el("p", {
-      className: `spending-budget${over ? " is-over" : ""}`,
+      className: `spending-budget${level}`,
       text: `예산 ${formatWon(item.budget)} · ${percent(item.amount, item.budget)}% 사용 · ${rest}`,
     });
   }
   return el("li", { className: "spending-item" }, [
-    el("div", { className: "spending-head" }, [
-      el("span", { className: "spending-name", text: item.category }),
-      el("span", { className: "spending-meta", text: `${item.count}건 · ${percent(item.amount, total)}%` }),
-      el("span", { className: "spending-amount", text: formatWon(item.amount) }),
+    el("button", { type: "button", className: "spending-button", "aria-label": `${item.category} 거래 보기`, onClick: () => onSelect(item.category) }, [
+      el("span", { className: "spending-head" }, [
+        el("span", { className: "spending-name", text: item.category }),
+        el("span", { className: "spending-meta", text: `${item.count}건 · ${percent(item.amount, total)}%` }),
+        el("span", { className: "spending-amount", text: formatWon(item.amount) }),
+      ]),
+      el("span", { className: "spending-bar" }, [
+        el("span", { className: `spending-fill${level}`, style: `width: ${(ratio * 100).toFixed(1)}%` }),
+      ]),
+      budgetLine,
     ]),
-    el("div", { className: "spending-bar" }, [
-      el("div", { className: `spending-fill${over ? " is-over" : ""}`, style: `width: ${(ratio * 100).toFixed(1)}%` }),
-    ]),
-    budgetLine,
   ]);
 }
 
@@ -334,29 +452,59 @@ function renderTransactionForm(container, props) {
   updateTransactionForm(form, props);
 }
 
-function buildTransactionForm({ editing, resetKey }) {
-  const values = editing || { type: "expense", date: todayString(), amount: "", category: "", memo: "" };
+function buildTransactionForm({ editing, defaults, resetKey }) {
+  const values = editing || {
+    type: defaults ? defaults.type : "expense",
+    date: defaults ? defaults.date : todayString(),
+    amount: "",
+    category: "",
+    memo: "",
+  };
 
-  const typeRadio = (type) =>
-    el("label", { className: "radio" }, [
+  const segment = (type) =>
+    el("label", { className: "segment" }, [
       el("input", { type: "radio", name: "type", value: type, checked: values.type === type }),
-      ` ${TYPE_LABELS[type]}`,
+      el("span", { text: TYPE_LABELS[type] }),
     ]);
+  const dateInput = el("input", { type: "date", name: "date", value: values.date });
+  const dateButton = (text, getDate) =>
+    el("button", { type: "button", className: "button-secondary shortcut-button", text, onClick: () => { dateInput.value = getDate(); } });
+  const amountInput = AmountInput({ name: "amount", value: values.amount });
+  const quickButton = ({ label, value }) =>
+    el("button", {
+      type: "button",
+      className: "button-secondary shortcut-button",
+      text: label,
+      onClick: () => {
+        const current = parseAmount(amountInput.value);
+        const next = (Number.isSafeInteger(current) && current > 0 ? current : 0) + value;
+        if (Number.isSafeInteger(next)) amountInput.value = formatAmountText(next);
+        amountInput.focus();
+      },
+    });
 
   const form = el("form", { className: "transaction-form", novalidate: true }, [
     el("h2"),
+    el("p", { className: "form-notice", role: "status", hidden: true }),
     el("p", { className: "form-error", role: "alert", hidden: true }),
-    el("fieldset", { className: "field type-field" }, [el("legend", { text: "유형" }), typeRadio("expense"), typeRadio("income")]),
-    el("label", { className: "field" }, ["거래일", el("input", { type: "date", name: "date", value: values.date })]),
-    el("label", { className: "field" }, [
-      "금액",
-      el("input", { type: "number", name: "amount", min: "1", step: "1", inputmode: "numeric", value: values.amount }),
+    el("fieldset", { className: "field type-field" }, [
+      el("legend", { text: "유형" }),
+      el("div", { className: "segmented" }, [segment("expense"), segment("income")]),
+    ]),
+    el("div", { className: "field" }, [
+      el("label", {}, ["거래일", dateInput]),
+      el("div", { className: "shortcuts" }, [dateButton("오늘", todayString), dateButton("어제", yesterdayString)]),
+    ]),
+    el("div", { className: "field" }, [
+      el("label", {}, ["금액", amountInput]),
+      el("div", { className: "shortcuts" }, QUICK_AMOUNTS.map(quickButton)),
     ]),
     el("div", { className: "field category-field" }),
-    el("label", { className: "field" }, ["메모", el("input", { type: "text", name: "memo", value: values.memo || "" })]),
+    el("label", { className: "field memo-field" }, ["메모", el("input", { type: "text", name: "memo", value: values.memo || "" })]),
     el("div", { className: "form-actions" }, [
       el("button", { type: "submit", className: "button-primary" }),
-      el("button", { type: "button", className: "button-secondary cancel-button", text: "취소" }),
+      el("button", { type: "button", className: "button-secondary cancel-button" }),
+      el("button", { type: "button", className: "button-danger delete-button", text: "삭제" }),
     ]),
   ]);
   form.dataset.resetKey = String(resetKey);
@@ -374,12 +522,17 @@ function buildTransactionForm({ editing, resetKey }) {
     form.latestProps.onSubmit(readTransactionInput(form));
   });
   form.querySelector(".cancel-button").addEventListener("click", () => form.latestProps.onCancelEdit());
+  form.querySelector(".delete-button").addEventListener("click", () => form.latestProps.onDelete(form.latestProps.editing));
   return form;
 }
 
 function updateTransactionForm(form, props) {
   const isEditing = props.editing !== null;
   form.querySelector("h2").textContent = isEditing ? "거래 수정" : "거래 등록";
+
+  const noticeBox = form.querySelector(".form-notice");
+  noticeBox.hidden = !props.notice;
+  noticeBox.textContent = props.notice || "";
 
   const errorBox = form.querySelector(".form-error");
   errorBox.hidden = !props.error;
@@ -390,8 +543,12 @@ function updateTransactionForm(form, props) {
   submit.disabled = props.submitting || props.categories.status !== "success";
 
   const cancel = form.querySelector(".cancel-button");
-  cancel.hidden = !isEditing;
+  cancel.textContent = isEditing ? "취소" : "닫기";
   cancel.disabled = props.submitting;
+
+  const remove = form.querySelector(".delete-button");
+  remove.hidden = !isEditing;
+  remove.disabled = props.submitting;
 
   renderCategoryField(form, props);
 }
@@ -404,9 +561,7 @@ function renderCategoryField(form, { categories, onRetryCategories }) {
   field.dataset.key = key;
 
   if (categories.status === "loading") {
-    field.replaceChildren(
-      el("label", {}, ["분류", el("select", { name: "category", disabled: true }, [el("option", { value: "", text: "분류를 불러오는 중..." })])]),
-    );
+    field.replaceChildren(el("span", { text: "분류" }), el("p", { className: "chips-loading", text: "분류를 불러오는 중..." }));
     return;
   }
   if (categories.status === "error") {
@@ -417,21 +572,24 @@ function renderCategoryField(form, { categories, onRetryCategories }) {
     return;
   }
 
-  const names = categories.data[type].map((category) => category.name);
-  const select = el("select", { name: "category" }, [
-    el("option", { value: "", text: "분류 선택" }),
-    ...names.map((name) => el("option", { value: name, text: name })),
-  ]);
   const pending = field.dataset.pending || "";
-  select.value = names.includes(pending) ? pending : "";
-  select.addEventListener("change", () => {
-    field.dataset.pending = select.value;
-  });
-  field.replaceChildren(el("label", {}, ["분류", select]));
+  const chip = ({ name }) => {
+    const radio = el("input", { type: "radio", name: "category", value: name, checked: name === pending });
+    radio.addEventListener("change", () => {
+      field.dataset.pending = radio.value;
+    });
+    return el("label", { className: "chip" }, [radio, el("span", { text: name })]);
+  };
+  field.replaceChildren(
+    el("fieldset", { className: "chips-field" }, [
+      el("legend", { text: "분류" }),
+      el("div", { className: "chips" }, categories.data[type].map(chip)),
+    ]),
+  );
 }
 
 function readTransactionInput(form) {
-  const category = form.elements.category;
+  const category = form.querySelector('input[name="category"]:checked');
   return {
     date: form.elements.date.value,
     type: form.elements.type.value,
@@ -563,8 +721,42 @@ function RecurringApplyButton({ recurring, applying, onApply }) {
   });
 }
 
+/** 거래일 문자열을 `11월 2일 (월)`로 바꾼다. */
+function formatDateHeading(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  // new Date(50, ...)는 1950년이 되므로 연도는 따로 넣는다.
+  const d = new Date(2000, 0, 1);
+  d.setFullYear(year, month - 1, day);
+  return `${month}월 ${day}일 (${WEEKDAYS[d.getDay()]})`;
+}
+
+/** 서버가 정렬한 순서를 유지한 채 날짜별로 묶는다. */
+function groupByDate(transactions) {
+  const groups = new Map();
+  for (const transaction of transactions) {
+    if (!groups.has(transaction.date)) groups.set(transaction.date, []);
+    groups.get(transaction.date).push(transaction);
+  }
+  return [...groups.entries()].map(([date, rows]) => ({ date, rows }));
+}
+
+function DateGroup({ date, rows, onEdit }) {
+  const total = (type) => rows.filter((t) => t.type === type).reduce((sum, t) => sum + t.amount, 0);
+  const expense = total("expense");
+  const income = total("income");
+  const heading = [
+    formatDateHeading(date),
+    expense ? `지출 ${formatWon(expense)}` : null,
+    income ? `수입 ${formatWon(income)}` : null,
+  ].filter(Boolean).join(" · ");
+  return el("section", { className: "date-group" }, [
+    el("h3", { className: "date-heading", text: heading }),
+    el("ul", { className: "transaction-list" }, rows.map((transaction) => TransactionItem({ transaction, onEdit }))),
+  ]);
+}
+
 function renderTransactionList(container, props) {
-  const { transactions, selected, editingId, deletingId, onEdit, onDelete, onRetry, filters } = props;
+  const { transactions, selected, onEdit, onRetry, filters } = props;
   // 다시 그려도 입력 중인(아직 검색하지 않은) 검색어를 유지한다.
   const previousQ = container.querySelector(".filter-q");
   const qDraft = previousQ ? previousQ.value : filters.q || "";
@@ -575,24 +767,15 @@ function renderTransactionList(container, props) {
   } else if (transactions.status === "error") {
     body = StatusMessage({ kind: "error", message: transactions.error.message, onRetry });
   } else if (transactions.data.length === 0) {
-    const message = hasFilters(filters)
-      ? "조건에 맞는 거래가 없습니다."
-      : `${selected.year}년 ${selected.month}월에는 거래 내역이 없습니다.`;
-    body = StatusMessage({ kind: "empty", message });
+    body = hasFilters(filters)
+      ? StatusMessage({ kind: "empty", message: "조건에 맞는 거래가 없습니다." })
+      : StatusMessage({
+          kind: "empty",
+          message: `${selected.year}년 ${selected.month}월에는 거래 내역이 없습니다. 첫 거래를 기록해 보세요.`,
+          action: { label: "+ 거래 추가", onClick: props.onAdd },
+        });
   } else {
-    body = el(
-      "ul",
-      { className: "transaction-list" },
-      transactions.data.map((transaction) =>
-        TransactionItem({
-          transaction,
-          isEditing: transaction.id === editingId,
-          isDeleting: transaction.id === deletingId,
-          onEdit,
-          onDelete,
-        }),
-      ),
-    );
+    body = el("div", { className: "date-groups" }, groupByDate(transactions.data).map((group) => DateGroup({ ...group, onEdit })));
   }
   container.replaceChildren(
     ...[
@@ -606,25 +789,16 @@ function renderTransactionList(container, props) {
   );
 }
 
-function TransactionItem({ transaction, isEditing, isDeleting, onEdit, onDelete }) {
+function TransactionItem({ transaction, onEdit }) {
   const t = transaction;
-  return el("li", { className: `transaction-item${isEditing ? " is-editing" : ""}` }, [
-    el("div", { className: "item-main" }, [
-      el("span", { className: "item-date", text: t.date }),
-      el("span", { className: `item-type ${t.type}`, text: TYPE_LABELS[t.type] }),
-      el("span", { className: "item-category", text: t.category }),
-      el("span", { className: "item-memo", text: t.memo || "" }),
-    ]),
-    el("span", { className: `item-amount ${t.type}`, text: formatWon(t.amount) }),
-    el("div", { className: "item-actions" }, [
-      el("button", { type: "button", className: "button-secondary", text: "수정", disabled: isDeleting, onClick: () => onEdit(t) }),
-      el("button", {
-        type: "button",
-        className: "button-danger",
-        text: isDeleting ? "삭제 중..." : "삭제",
-        disabled: isDeleting,
-        onClick: () => onDelete(t),
-      }),
+  return el("li", { className: "transaction-row" }, [
+    el("button", { type: "button", className: "transaction-item", onClick: () => onEdit(t) }, [
+      el("span", { className: "item-main" }, [
+        el("span", { className: `item-type ${t.type}`, text: TYPE_LABELS[t.type] }),
+        el("span", { className: "item-category", text: t.category }),
+        el("span", { className: "item-memo", text: t.memo || "" }),
+      ]),
+      el("span", { className: `item-amount ${t.type}`, text: formatSignedWon(t.type, t.amount) }),
     ]),
   ]);
 }
@@ -748,12 +922,8 @@ function CategoryItem(props) {
   }
 
   if (isBudgeting) {
-    const input = el("input", {
-      type: "number",
+    const input = AmountInput({
       className: "budget-input",
-      min: "1",
-      step: "1",
-      inputmode: "numeric",
       placeholder: "월 예산",
       value: budgetDraft ?? (budget === null ? "" : String(budget)),
       disabled: busy,
@@ -829,8 +999,12 @@ function renderRecurringManager(container, props) {
       ),
     );
   }
+  form.hidden = !props.formOpen;
   const errorBox = props.error ? el("p", { className: "form-error", role: "alert", text: props.error.message }) : null;
-  container.replaceChildren(...[el("h2", { text: "고정 거래" }), errorBox, list, form].filter(Boolean));
+  const addButton = props.formOpen
+    ? null
+    : el("button", { type: "button", className: "button-secondary recurring-add-button", text: "고정 거래 추가", disabled: props.busy, onClick: props.onStartAdd });
+  container.replaceChildren(...[el("h2", { text: "고정 거래" }), errorBox, list, addButton, form].filter(Boolean));
 }
 
 function buildRecurringForm({ editing, resetKey }) {
@@ -849,7 +1023,7 @@ function buildRecurringForm({ editing, resetKey }) {
     ]),
     el("label", { className: "field" }, [
       "금액",
-      el("input", { type: "number", name: "amount", min: "1", step: "1", inputmode: "numeric", value: values.amount }),
+      AmountInput({ name: "amount", value: values.amount }),
     ]),
     el("div", { className: "field recurring-category-field" }),
     el("label", { className: "field" }, ["메모", el("input", { type: "text", name: "memo", value: values.memo || "" })]),
@@ -881,9 +1055,7 @@ function updateRecurringForm(form, props) {
   const submit = form.querySelector('button[type="submit"]');
   submit.textContent = props.busy ? "저장 중..." : isEditing ? "수정 저장" : "추가";
   submit.disabled = props.busy || props.categories.status !== "success";
-  const cancel = form.querySelector(".cancel-button");
-  cancel.hidden = !isEditing;
-  cancel.disabled = props.busy;
+  form.querySelector(".cancel-button").disabled = props.busy;
   renderRecurringCategoryField(form, props);
 }
 
@@ -953,32 +1125,46 @@ function RecurringItem({ item, busy, isEditing, onEdit, onDelete }) {
 // ---------------------------------------------------------------------------
 
 const dom = {
-  backup: document.getElementById("backup-button"),
+  tabs: document.getElementById("tab-bar"),
   month: document.getElementById("month-selector"),
   navigator: document.getElementById("month-navigator"),
   summary: document.getElementById("summary-panel"),
   spending: document.getElementById("category-spending"),
+  formDialog: document.getElementById("transaction-dialog"),
   form: document.getElementById("transaction-form"),
+  confirm: document.getElementById("confirm-dialog"),
+  toast: document.getElementById("toast-region"),
+  add: document.getElementById("add-button"),
   categories: document.getElementById("category-manager"),
   recurring: document.getElementById("recurring-manager"),
+  data: document.getElementById("data-manager"),
   list: document.getElementById("transaction-list"),
+  panels: {
+    list: document.getElementById("panel-list"),
+    stats: document.getElementById("panel-stats"),
+    settings: document.getElementById("panel-settings"),
+  },
 };
 
 const state = {
+  tab: "list",
   selected: currentYearMonth(),
+  monthPickerOpen: false,
   categories: { status: "loading" },
   transactions: { status: "loading" },
   summary: { status: "loading" },
+  formOpen: false,
+  formDefaults: null,
+  formNotice: null,
   editing: null,
   submitting: false,
   formError: null,
-  deletingId: null,
   formResetKey: 0,
   categoryBusy: false,
   categoryError: null,
   renamingCategoryId: null,
   categoryResetKey: 0,
-  backingUp: false,
+  dataBusy: null,
   filters: { ...EMPTY_FILTERS },
   filterError: null,
   filterSummary: null,
@@ -987,6 +1173,7 @@ const state = {
   budgetEditingId: null,
   recurring: { status: "loading" },
   recurringEditing: null,
+  recurringFormOpen: false,
   recurringBusy: false,
   recurringError: null,
   recurringResetKey: 0,
@@ -1004,17 +1191,30 @@ const latestRequest = {
   recurring: 0,
 };
 
-function renderBackup() {
-  renderBackupButton(dom.backup, { busy: state.backingUp, onBackup: handleBackup });
+function renderTabs() {
+  renderTabBar(dom.tabs, { tab: state.tab, onChange: handleTabChange });
+  for (const [name, panel] of Object.entries(dom.panels)) panel.hidden = name !== state.tab;
+  dom.add.hidden = state.tab === "settings";
+}
+
+function renderData() {
+  renderDataManager(dom.data, {
+    busy: state.dataBusy,
+    onBackup: () => handleDownload("backup", api.downloadBackup),
+    onExportCsv: () => handleDownload("csv", api.downloadCsv),
+    onRestoreFile: handleRestoreFile,
+  });
 }
 
 function renderMonth() {
-  renderMonthSelector(dom.month, { value: state.selected, disabled: state.submitting, onChange: handleMonthChange });
+  renderMonthSelector(dom.month, { value: state.selected, open: state.monthPickerOpen, disabled: state.submitting, onChange: handleMonthChange });
   renderMonthNavigator(dom.navigator, {
     value: state.selected,
     today: currentYearMonth(),
     disabled: state.submitting,
+    pickerOpen: state.monthPickerOpen,
     onChange: handleMonthChange,
+    onTogglePicker: handleToggleMonthPicker,
   });
 }
 
@@ -1023,20 +1223,25 @@ function renderSummary() {
 }
 
 function renderSpending() {
-  renderCategorySpending(dom.spending, { spending: state.categorySpending, selected: state.selected, onRetry: loadCategorySpending });
+  renderCategorySpending(dom.spending, { spending: state.categorySpending, selected: state.selected, onRetry: loadCategorySpending, onSelect: handleSpendingSelect });
 }
 
 function renderForm() {
   renderTransactionForm(dom.form, {
     categories: state.categories,
     editing: state.editing,
+    defaults: state.formDefaults,
     submitting: state.submitting,
     error: state.formError,
+    notice: state.formNotice,
     resetKey: state.formResetKey,
     onSubmit: handleSubmit,
-    onCancelEdit: handleCancelEdit,
+    onCancelEdit: closeForm,
+    onDelete: handleDelete,
     onRetryCategories: loadCategories,
   });
+  if (state.formOpen && !dom.formDialog.open) dom.formDialog.showModal();
+  if (!state.formOpen && dom.formDialog.open) dom.formDialog.close();
 }
 
 function renderCategories() {
@@ -1066,6 +1271,8 @@ function renderRecurring() {
     recurring: state.recurring,
     categories: state.categories,
     editing: state.recurringEditing,
+    formOpen: state.recurringFormOpen,
+    onStartAdd: handleStartRecurring,
     busy: state.recurringBusy,
     error: state.recurringError,
     resetKey: state.recurringResetKey,
@@ -1081,10 +1288,8 @@ function renderList() {
   renderTransactionList(dom.list, {
     transactions: state.transactions,
     selected: state.selected,
-    editingId: state.editing ? state.editing.id : null,
-    deletingId: state.deletingId,
+    onAdd: openNewForm,
     onEdit: handleEdit,
-    onDelete: handleDelete,
     onRetry: () => {
       loadTransactions();
       loadFilterSummary();
@@ -1193,14 +1398,53 @@ function handleFilterInvalid(message) {
   renderList();
 }
 
+function handleTabChange(tab) {
+  state.tab = tab;
+  renderTabs();
+}
+
+function handleSpendingSelect(category) {
+  // 입력 중이던 검색어까지 지워야 고른 분류의 거래가 모두 보인다.
+  const qInput = dom.list.querySelector(".filter-q");
+  if (qInput) qInput.value = "";
+  handleTabChange("list");
+  handleFiltersChange({ type: "expense", category, q: null });
+}
+
+function handleToggleMonthPicker() {
+  state.monthPickerOpen = !state.monthPickerOpen;
+  renderMonth();
+}
+
+function focusAmount() {
+  dom.form.querySelector('input[name="amount"]').focus();
+}
+
 function resetForm() {
   state.editing = null;
   state.formError = null;
+  state.formNotice = null;
   state.formResetKey += 1;
+}
+
+function openNewForm() {
+  resetForm();
+  state.formDefaults = null;
+  state.formOpen = true;
+  renderForm();
+  focusAmount();
+}
+
+function closeForm() {
+  resetForm();
+  state.formDefaults = null;
+  state.formOpen = false;
+  renderForm();
 }
 
 function handleMonthChange(value) {
   state.selected = value;
+  state.monthPickerOpen = false;
   renderMonth();
   loadMonth();
 }
@@ -1210,6 +1454,7 @@ async function handleSubmit(input) {
 
   const message = validateTransactionInput(input);
   if (message) {
+    state.formNotice = null;
     state.formError = { code: "CLIENT_VALIDATION", message };
     renderForm();
     return;
@@ -1218,12 +1463,22 @@ async function handleSubmit(input) {
   const editing = state.editing;
   state.submitting = true;
   state.formError = null;
+  state.formNotice = null;
   renderForm();
   renderMonth();
 
+  let continueEntry = false;
   try {
     const saved = editing ? await api.updateTransaction(editing.id, input) : await api.createTransaction(input);
     resetForm();
+    if (editing) {
+      state.formOpen = false;
+    } else {
+      // 연속 입력: 창을 유지하고 유형과 거래일을 이어 간다.
+      state.formDefaults = { type: input.type, date: input.date };
+      state.formNotice = "저장했습니다.";
+      continueEntry = true;
+    }
     // 저장한 거래가 바로 보이도록 그 거래의 연·월로 이동한다.
     const [year, month] = saved.date.split("-").map(Number);
     state.selected = { year, month };
@@ -1236,43 +1491,105 @@ async function handleSubmit(input) {
     renderForm();
     renderMonth();
     renderList();
+    if (continueEntry) focusAmount();
   }
 }
 
 function handleEdit(transaction) {
   state.editing = transaction;
   state.formError = null;
+  state.formNotice = null;
   state.formResetKey += 1;
+  state.formOpen = true;
   renderForm();
-  renderList();
-}
-
-function handleCancelEdit() {
-  resetForm();
-  renderForm();
-  renderList();
 }
 
 async function handleDelete(transaction) {
   const t = transaction;
-  if (!window.confirm(`${t.date} ${t.category} ${formatWon(t.amount)} 내역을 삭제할까요?`)) return;
+  const confirmed = await confirmDialog({
+    message: `${t.date} ${t.category} ${formatWon(t.amount)} 내역을 삭제할까요?`,
+    confirmText: "삭제",
+    danger: true,
+  });
+  if (!confirmed) return;
 
-  state.deletingId = t.id;
-  renderList();
   try {
     await api.deleteTransaction(t.id);
-    if (state.editing && state.editing.id === t.id) {
-      resetForm();
-      renderForm();
-    }
-    state.deletingId = null;
+    closeForm();
     loadMonth();
+    showToast("삭제했습니다.", {
+      duration: UNDO_DURATION_MS,
+      action: { label: "되돌리기", onClick: () => handleUndoDelete(t) },
+    });
   } catch (error) {
-    state.deletingId = null;
-    renderList();
-    window.alert(error.message);
+    // 수정 창이 알림을 가리므로 에러는 창 안에 보여 준다.
+    state.formError = error;
+    renderForm();
     if (error.code === "TRANSACTION_NOT_FOUND") loadMonth();
   }
+}
+
+async function handleUndoDelete(transaction) {
+  try {
+    await api.restoreTransaction(transaction);
+    loadMonth();
+    showToast("되돌렸습니다.");
+  } catch (error) {
+    showErrorToast(error);
+  }
+}
+
+// --- 확인 창·알림 (v1.0): 브라우저 기본 confirm, alert를 대신한다 ---
+
+/** 앱 안 확인 창을 띄우고 확인하면 true를 돌려준다. Esc는 취소다. */
+function confirmDialog({ message, confirmText = "확인", danger = false }) {
+  return new Promise((resolve) => {
+    const dialog = dom.confirm;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      dialog.removeEventListener("close", onClose);
+      if (dialog.open) dialog.close();
+      resolve(result);
+    };
+    const onClose = () => finish(false);
+    dialog.addEventListener("close", onClose);
+    dialog.replaceChildren(
+      el("p", { className: "confirm-message", text: message }),
+      el("div", { className: "form-actions confirm-actions" }, [
+        el("button", { type: "button", className: "button-secondary confirm-cancel", text: "취소", onClick: () => finish(false) }),
+        el("button", { type: "button", className: `${danger ? "button-danger" : "button-primary"} confirm-ok`, text: confirmText, onClick: () => finish(true) }),
+      ]),
+    );
+    dialog.showModal();
+  });
+}
+
+let toastTimer = null;
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  dom.toast.replaceChildren();
+}
+
+/** 화면 아래 알림. 한 번에 하나만 보이고, 새 알림이 오면 바뀐다. */
+function showToast(message, { action = null, duration = TOAST_DURATION_MS, kind = "info" } = {}) {
+  hideToast();
+  const buttons = [];
+  if (action) {
+    buttons.push(el("button", { type: "button", className: "toast-action", text: action.label, onClick: () => { hideToast(); action.onClick(); } }));
+  }
+  // 에러는 읽을 시간이 필요하므로 닫기를 누를 때까지 남긴다.
+  if (kind === "error") buttons.push(el("button", { type: "button", className: "toast-action", text: "닫기", onClick: hideToast }));
+  dom.toast.replaceChildren(
+    el("div", { className: `toast toast-${kind}`, role: kind === "error" ? "alert" : "status" }, [el("span", { text: message }), ...buttons]),
+  );
+  if (kind !== "error") toastTimer = setTimeout(hideToast, duration);
+}
+
+function showErrorToast(error) {
+  showToast(error.message, { kind: "error" });
 }
 
 // --- 분류 관리 (v0.4) · 예산 (v0.10) ---
@@ -1347,9 +1664,14 @@ function handleRenameCategory(category, name) {
   });
 }
 
-function handleDeleteCategory(category) {
+async function handleDeleteCategory(category) {
   if (state.categoryBusy) return;
-  if (!window.confirm(`'${category.name}'(${TYPE_LABELS[category.type]}) 분류를 삭제할까요?`)) return;
+  const confirmed = await confirmDialog({
+    message: `'${category.name}'(${TYPE_LABELS[category.type]}) 분류를 삭제할까요?`,
+    confirmText: "삭제",
+    danger: true,
+  });
+  if (!confirmed) return;
   return runCategoryAction(async () => {
     await api.deleteCategory(category.id);
     if (state.renamingCategoryId === category.id) state.renamingCategoryId = null;
@@ -1428,13 +1750,23 @@ function handleSubmitRecurring(input) {
     if (editing) await api.updateRecurring(editing.id, input);
     else await api.createRecurring(input);
     state.recurringEditing = null;
+    state.recurringFormOpen = false;
     state.recurringResetKey += 1;
     loadRecurring();
   });
 }
 
+function handleStartRecurring() {
+  state.recurringEditing = null;
+  state.recurringFormOpen = true;
+  state.recurringError = null;
+  state.recurringResetKey += 1;
+  renderRecurring();
+}
+
 function handleEditRecurring(item) {
   state.recurringEditing = item;
+  state.recurringFormOpen = true;
   state.recurringError = null;
   state.recurringResetKey += 1;
   renderRecurring();
@@ -1442,19 +1774,25 @@ function handleEditRecurring(item) {
 
 function handleCancelRecurring() {
   state.recurringEditing = null;
+  state.recurringFormOpen = false;
   state.recurringError = null;
   state.recurringResetKey += 1;
   renderRecurring();
 }
 
-function handleDeleteRecurring(item) {
+async function handleDeleteRecurring(item) {
   if (state.recurringBusy) return;
-  const message = `매달 ${item.day}일 ${item.category} ${formatWon(item.amount)} 고정 거래를 삭제할까요? (이미 추가된 거래는 남습니다)`;
-  if (!window.confirm(message)) return;
+  const confirmed = await confirmDialog({
+    message: `매달 ${item.day}일 ${item.category} ${formatWon(item.amount)} 고정 거래를 삭제할까요? (이미 추가된 거래는 남습니다)`,
+    confirmText: "삭제",
+    danger: true,
+  });
+  if (!confirmed) return;
   return runRecurringAction(async () => {
     await api.deleteRecurring(item.id);
     if (state.recurringEditing && state.recurringEditing.id === item.id) {
       state.recurringEditing = null;
+      state.recurringFormOpen = false;
       state.recurringResetKey += 1;
     }
     loadRecurring();
@@ -1464,38 +1802,70 @@ function handleDeleteRecurring(item) {
 async function handleApplyRecurring(pending) {
   if (state.applyingRecurring || pending === 0) return;
   const { year, month } = state.selected;
-  if (!window.confirm(`${year}년 ${month}월에 고정 거래 ${pending}건을 추가할까요?`)) return;
+  const confirmed = await confirmDialog({ message: `${year}년 ${month}월에 고정 거래 ${pending}건을 추가할까요?`, confirmText: "추가" });
+  if (!confirmed) return;
   state.applyingRecurring = true;
   renderList();
   try {
     await api.applyRecurring({ year, month });
     loadMonth();
   } catch (error) {
-    window.alert(error.message);
+    showErrorToast(error);
   } finally {
     state.applyingRecurring = false;
     renderList();
   }
 }
 
-// --- 백업 (v0.5) ---
+// --- 백업·CSV·복원 (v0.5, v1.0) ---
 
-async function handleBackup() {
-  if (state.backingUp) return;
-  state.backingUp = true;
-  renderBackup();
+async function handleDownload(kind, download) {
+  if (state.dataBusy) return;
+  state.dataBusy = kind;
+  renderData();
   try {
-    const { blob, filename } = await api.downloadBackup();
+    const { blob, filename } = await download();
     saveBlob(blob, filename);
   } catch (error) {
-    window.alert(error.message);
+    showErrorToast(error);
   } finally {
-    state.backingUp = false;
-    renderBackup();
+    state.dataBusy = null;
+    renderData();
   }
 }
 
-renderBackup();
+async function handleRestoreFile(file) {
+  if (state.dataBusy) return;
+  const confirmed = await confirmDialog({
+    message: `지금 데이터를 '${file.name}'의 내용으로 바꿀까요? 지금 데이터의 사본은 서버 폴더에 남습니다.`,
+    confirmText: "복원",
+    danger: true,
+  });
+  if (!confirmed) {
+    renderData();
+    return;
+  }
+  state.dataBusy = "restore";
+  renderData();
+  try {
+    await api.restoreBackup(file);
+    // 화면의 모든 상태가 옛 데이터이므로 새로 불러온다.
+    window.location.reload();
+  } catch (error) {
+    state.dataBusy = null;
+    renderData();
+    showErrorToast(error);
+  }
+}
+
+dom.add.addEventListener("click", openNewForm);
+// Esc로 닫은 경우에도 폼 상태를 정리한다.
+dom.formDialog.addEventListener("close", () => {
+  if (state.formOpen) closeForm();
+});
+
+renderTabs();
+renderData();
 renderMonth();
 renderForm();
 renderCategories();

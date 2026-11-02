@@ -22,6 +22,8 @@
   --expense: #dc2626;
   --expense-soft: #fdeeee;
   --highlight: #fff6d6;
+  --warn: #eab308;
+  --warn-text: #a16207;
 
   --radius: 14px;
   --radius-sm: 8px;
@@ -50,7 +52,7 @@ body {
 .app {
   max-width: 760px;
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: 16px 16px 96px;
 }
 
 /* --------------------------------------------------------------------------
@@ -76,28 +78,66 @@ h3 {
   font-weight: 700;
 }
 
+/* 월 이동과 요약은 스크롤해도 위에 남긴다 (v1.0) */
 .app-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 20px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.app-header-inner {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 12px 16px;
 }
 
 .title-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 8px 12px;
 }
 
-.app-header input[type="month"] {
-  width: auto;
-  min-width: 160px;
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--border);
 }
 
-/* 월 선택 + 이전·다음·이번 달 버튼 (v0.7) */
+.tab-button {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-button.is-active {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.tab-button:focus-visible,
+.month-label:focus-visible,
+.transaction-item:focus-visible,
+.spending-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .month-controls {
   display: flex;
   flex-wrap: wrap;
@@ -107,12 +147,45 @@ h3 {
 
 .month-navigator {
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
 .nav-button {
-  padding: 0 12px;
-  font-size: 0.85rem;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 1.1rem;
+}
+
+.today-button {
+  height: 32px;
+  margin-left: 4px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+}
+
+.month-label {
+  min-width: 118px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.month-label:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.month-selector input[type="month"] {
+  width: auto;
+  height: 36px;
+  min-width: 160px;
 }
 
 /* --------------------------------------------------------------------------
@@ -224,12 +297,6 @@ button:disabled {
 .button-danger:hover:not(:disabled) {
   background: var(--expense-soft);
   border-color: #f5c2c2;
-}
-
-.backup-button {
-  height: 34px;
-  padding: 0 12px;
-  font-size: 0.85rem;
 }
 
 /* --------------------------------------------------------------------------
@@ -531,25 +598,12 @@ button:disabled {
   border-top: 0;
 }
 
-.transaction-item.is-editing {
-  margin: 0 -8px;
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--highlight);
-}
-
 .item-main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 10px;
   min-width: 0;
-}
-
-.item-date {
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-variant-numeric: tabular-nums;
 }
 
 .item-type {
@@ -819,21 +873,355 @@ button:disabled {
   .list-filters {
     grid-template-columns: minmax(0, 1fr);
   }
+}
 
-  .app-header input[type="month"] {
-    min-width: 0;
+
+/* --------------------------------------------------------------------------
+   v1.0 화면
+   -------------------------------------------------------------------------- */
+
+/* 헤더 안 요약은 세 칸을 한 줄로 작게 보여 준다. */
+.app-header .summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.app-header .summary > div {
+  display: block;
+  padding: 6px 10px;
+}
+
+.app-header .summary dt {
+  font-size: 0.75rem;
+}
+
+.app-header .summary dd {
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+#summary-panel > h2 {
+  display: none;
+}
+
+/* 날짜별 거래 목록 */
+.date-group + .date-group {
+  margin-top: 14px;
+}
+
+.date-heading {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.transaction-row + .transaction-row {
+  border-top: 1px solid var(--border);
+}
+
+.transaction-item {
+  width: 100%;
+  height: auto;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+/* 분류별 지출: 줄을 누르면 그 분류 거래로 이동, 예산 사용률에 따라 색이 바뀐다 */
+.spending-button {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+.spending-item {
+  padding: 2px 0;
+}
+
+.spending-bar,
+.spending-fill {
+  display: block;
+}
+
+.spending-budget {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.spending-fill.is-warn {
+  background: var(--warn);
+}
+
+.spending-budget.is-warn {
+  color: var(--warn-text);
+  font-weight: 600;
+}
+
+/* 입력 창: 넓은 화면은 가운데, 좁은 화면은 아래에서 올라오는 모양 */
+.sheet-dialog,
+.confirm-dialog {
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgba(16, 24, 40, 0.25);
+}
+
+.sheet-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.confirm-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 20px;
+}
+
+.sheet-dialog::backdrop,
+.confirm-dialog::backdrop {
+  background: rgba(16, 24, 40, 0.45);
+}
+
+.confirm-message {
+  margin: 0 0 16px;
+  overflow-wrap: anywhere;
+}
+
+.confirm-actions {
+  justify-content: flex-end;
+}
+
+.transaction-form > .form-notice,
+.transaction-form > .category-field,
+.transaction-form > .memo-field {
+  grid-column: 1 / -1;
+}
+
+.form-notice {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--income-soft);
+  color: var(--income);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.form-actions .delete-button {
+  margin-left: auto;
+}
+
+/* 지출 | 수입 토글과 분류 칩은 겉모양만 바꾼 라디오 버튼이다 */
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--border);
+}
+
+.segment,
+.chip {
+  position: relative;
+  cursor: pointer;
+}
+
+.segment input,
+.chip input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.segment span {
+  display: block;
+  padding: 7px 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.segment input:checked + span {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.segment input:focus-visible + span,
+.chip input:focus-visible + span {
+  box-shadow: var(--focus-ring);
+}
+
+.chips-field {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.chips-field legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.chips-loading {
+  margin: 6px 0 0;
+  font-weight: 400;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip span {
+  display: block;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.chip input:checked + span {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.shortcut-button {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 0.8rem;
+}
+
+/* 추가 버튼 */
+.add-button {
+  position: fixed;
+  right: max(16px, calc(50vw - 364px));
+  bottom: 24px;
+  z-index: 5;
+  height: 48px;
+  padding: 0 20px;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(47, 111, 237, 0.4);
+  font-weight: 700;
+}
+
+.recurring-add-button {
+  margin-top: 12px;
+}
+
+.recurring-form {
+  margin-top: 16px;
+}
+
+/* 데이터 카드 */
+.data-note {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.data-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 알림 */
+.toast-region {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  z-index: 20;
+  width: min(480px, calc(100vw - 32px));
+  transform: translateX(-50%);
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: #1d2433;
+  color: #fff;
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.3);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.toast-error {
+  background: var(--expense);
+}
+
+.toast-action {
+  flex: none;
+  height: auto;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (max-width: 560px) {
+  .sheet-dialog {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
+    max-height: 92dvh;
+  }
+
+  .transaction-form {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 480px) {
-  .summary {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .summary > div {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
+  .app-header .summary dd {
+    font-size: 0.88rem;
   }
 }
