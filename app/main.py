@@ -1,12 +1,16 @@
 import calendar
+import csv
+import io
 import logging
 import sqlite3
+import tempfile
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -14,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.categories import TYPE_LABELS
-from app.db import connect, init_db
+from app.db import connect, init_db, save_copy, table_columns
 from app.schemas import (
     BudgetInput,
     CategoryInput,
@@ -22,6 +26,7 @@ from app.schemas import (
     RecurringApplyInput,
     RecurringInput,
     TransactionInput,
+    TransactionRestoreInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,11 +35,13 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 # 입력값 검사 순서 (API_SPEC 1.2절). 에러가 여러 개면 이 순서로 첫 번째만 돌려준다.
 # 거래: date → type → amount → category → memo, 분류: type → name,
-# 고정 거래: day → type → amount → category_id → memo
-FIELD_ORDER = ["date", "day", "type", "amount", "category", "category_id", "name", "memo"]
-REQUIRED_FIELDS = {"date", "day", "type", "amount", "category", "category_id", "name"}
+# 고정 거래: day → type → amount → category_id → memo, 되돌리기: id → 거래 → created_at
+FIELD_ORDER = ["id", "date", "day", "type", "amount", "category", "category_id", "name", "memo", "created_at"]
+REQUIRED_FIELDS = {"id", "date", "day", "type", "amount", "category", "category_id", "name", "created_at"}
 
 FIELD_ERROR_CODES = {
+    "id": "INVALID_ID",
+    "created_at": "INVALID_CREATED_AT",
     "date": "INVALID_DATE",
     "day": "INVALID_DAY",
     "type": "INVALID_TYPE",
@@ -46,6 +53,8 @@ FIELD_ERROR_CODES = {
 }
 
 MISSING_MESSAGES = {
+    "id": "거래 ID가 필요합니다.",
+    "created_at": "등록 시각이 필요합니다.",
     "date": "거래일을 입력해 주세요.",
     "day": "날을 입력해 주세요.",
     "type": "거래 유형을 선택해 주세요.",
@@ -80,6 +89,11 @@ MESSAGES = {
     "BUDGET_NOT_FOUND": "예산이 정해지지 않은 분류입니다.",
     "INVALID_DAY": "날은 1부터 31 사이여야 합니다.",
     "RECURRING_NOT_FOUND": "이미 삭제되었거나 없는 고정 거래입니다.",
+    "INVALID_CREATED_AT": "등록 시각이 올바르지 않습니다.",
+    "TRANSACTION_EXISTS": "이미 있는 내역입니다.",
+    "INVALID_BACKUP": "올바른 백업 파일이 아닙니다.",
+    "BACKUP_TOO_LARGE": "백업 파일은 100MB 이하여야 합니다.",
+    "UNSUPPORTED_MEDIA_TYPE": "지원하지 않는 요청 형식입니다.",
     "NOT_FOUND": "요청한 주소를 찾을 수 없습니다.",
     "METHOD_NOT_ALLOWED": "지원하지 않는 요청 방식입니다.",
     "DATABASE_ERROR": "데이터베이스 작업에 실패했습니다.",
@@ -210,7 +224,12 @@ def open_db(failure_message):
             conn.close()
 
 
-TRANSACTION_COLUMNS = "id, date, type, amount, category, memo, created_at"
+# 거래는 분류를 ID로 저장하고, API에는 JOIN한 분류 이름을 돌려준다 (TRD 15.1절).
+TRANSACTION_FROM = "transactions t JOIN categories c ON c.id = t.category_id"
+TRANSACTION_SELECT = (
+    f"SELECT t.id, t.date, t.type, t.amount, c.name AS category, t.memo, t.created_at FROM {TRANSACTION_FROM}"
+)
+TRANSACTION_ORDER = "ORDER BY t.date DESC, t.created_at DESC, t.id DESC"
 
 # SQLite INTEGER의 최대값. 이보다 큰 id는 DB에 넘기지 않고 INVALID_ID로 처리한다.
 MAX_ID = 2**63 - 1
@@ -224,15 +243,15 @@ def month_bounds(year, month):
 def month_conditions(year, month, type_=None, category=None, q=None):
     """월 범위 조건에 유형·분류·메모 검색어 조건(있는 것만)을 더한다."""
     first_day, last_day = month_bounds(year, month)
-    where, params = ["date BETWEEN ? AND ?"], [first_day, last_day]
+    where, params = ["t.date BETWEEN ? AND ?"], [first_day, last_day]
     # 같은 이름이 지출·수입에 모두 있을 수 있어 분류는 유형과 함께 받아야 정해진다.
     if category is not None and (type_ is None or not category):
         raise ApiError(422, "INVALID_QUERY", "분류 필터는 유형과 분류를 함께 지정해야 합니다.")
     if type_ is not None:
-        where.append("type = ?")
+        where.append("t.type = ?")
         params.append(type_)
     if category is not None:
-        where.append("category = ?")
+        where.append("c.name = ?")
         params.append(category)
     keyword = (q or "").strip()
     if len(keyword) > MAX_KEYWORD_LENGTH:
@@ -240,7 +259,7 @@ def month_conditions(year, month, type_=None, category=None, q=None):
     if keyword:
         # %, _ 를 와일드카드가 아닌 일반 글자로 찾는다. SQLite LIKE는 영문 대소문자를 구분하지 않는다.
         escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        where.append("memo LIKE ? ESCAPE '\\'")
+        where.append("t.memo LIKE ? ESCAPE '\\'")
         params.append(f"%{escaped}%")
     return " AND ".join(where), params
 
@@ -306,12 +325,8 @@ def rename_category(body: CategoryRename, category_id: int = PathParam(ge=1, le=
             category = get_user_category(conn, category_id)
             if body.name != category["name"]:
                 ensure_category_name_available(conn, category["type"], body.name, exclude_id=category_id)
-                # 분류 이름과 그 분류를 쓰는 거래의 분류를 한 트랜잭션에서 함께 바꾼다.
+                # 거래는 분류 ID로 연결되어 있어 자동으로 새 이름으로 보인다.
                 conn.execute("UPDATE categories SET name = ? WHERE id = ?", (body.name, category_id))
-                conn.execute(
-                    "UPDATE transactions SET category = ? WHERE type = ? AND category = ?",
-                    (body.name, category["type"], category["name"]),
-                )
         row = fetch_category(conn, category_id)
     return category_to_dict(row)
 
@@ -320,11 +335,8 @@ def rename_category(body: CategoryRename, category_id: int = PathParam(ge=1, le=
 def delete_category(category_id: int = PathParam(ge=1, le=MAX_ID)):
     with open_db("분류를 삭제하지 못했습니다.") as conn:
         with conn:
-            category = get_user_category(conn, category_id)
-            used = conn.execute(
-                "SELECT COUNT(*) FROM transactions WHERE type = ? AND category = ?",
-                (category["type"], category["name"]),
-            ).fetchone()[0]
+            get_user_category(conn, category_id)
+            used = conn.execute("SELECT COUNT(*) FROM transactions WHERE category_id = ?", (category_id,)).fetchone()[0]
             recurring = conn.execute(
                 "SELECT COUNT(*) FROM recurring_transactions WHERE category_id = ?", (category_id,)
             ).fetchone()[0]
@@ -349,8 +361,7 @@ def list_transactions(
     where, params = month_conditions(year, month, type_, category, q)
     with open_db("거래 내역을 불러오지 못했습니다.") as conn:
         rows = conn.execute(
-            f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE {where} "
-            "ORDER BY date DESC, created_at DESC, id DESC",
+            f"{TRANSACTION_SELECT} WHERE {where} {TRANSACTION_ORDER}",
             params,
         ).fetchall()
     return [dict(row) for row in rows]
@@ -361,8 +372,8 @@ def get_category_spending(year: int = Query(ge=1, le=9999), month: int = Query(g
     where, params = month_conditions(year, month, "expense")
     with open_db("분류별 지출을 불러오지 못했습니다.") as conn:
         rows = conn.execute(
-            f"SELECT category, SUM(amount) AS amount, COUNT(*) AS count FROM transactions WHERE {where} "
-            "GROUP BY category",
+            f"SELECT c.name AS category, SUM(t.amount) AS amount, COUNT(*) AS count FROM {TRANSACTION_FROM} "
+            f"WHERE {where} GROUP BY c.name",
             params,
         ).fetchall()
         budgets = conn.execute(
@@ -394,12 +405,24 @@ def get_summary(
     with open_db("월별 요약을 불러오지 못했습니다.") as conn:
         income, expense = conn.execute(
             "SELECT "
-            "COALESCE(SUM(CASE WHEN type = 'income' THEN amount END), 0), "
-            "COALESCE(SUM(CASE WHEN type = 'expense' THEN amount END), 0) "
-            f"FROM transactions WHERE {where}",
+            "COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount END), 0), "
+            "COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount END), 0) "
+            f"FROM {TRANSACTION_FROM} WHERE {where}",
             params,
         ).fetchone()
     return {"year": year, "month": month, "income": income, "expense": expense, "balance": income - expense}
+
+
+def category_id_of(conn, type_, name):
+    """본문 검사 뒤에 분류가 삭제된 경우까지 막는다."""
+    row = conn.execute("SELECT id FROM categories WHERE type = ? AND name = ?", (type_, name)).fetchone()
+    if row is None:
+        raise ApiError(422, "INVALID_CATEGORY", f"{TYPE_LABELS[type_]}에는 '{name}' 분류를 사용할 수 없습니다.")
+    return row["id"]
+
+
+def fetch_transaction(conn, transaction_id):
+    return conn.execute(f"{TRANSACTION_SELECT} WHERE t.id = ?", (transaction_id,)).fetchone()
 
 
 @app.post("/api/transactions", status_code=201)
@@ -408,13 +431,29 @@ def create_transaction(body: TransactionInput):
     with open_db("거래 내역을 저장하지 못했습니다.") as conn:
         with conn:
             cursor = conn.execute(
-                "INSERT INTO transactions (date, type, amount, category, memo, created_at) "
+                "INSERT INTO transactions (date, type, amount, category_id, memo, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (body.date.isoformat(), body.type, body.amount, body.category, body.memo, created_at),
+                (body.date.isoformat(), body.type, body.amount, category_id_of(conn, body.type, body.category), body.memo, created_at),
             )
-        row = conn.execute(
-            f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE id = ?", (cursor.lastrowid,)
-        ).fetchone()
+        row = fetch_transaction(conn, cursor.lastrowid)
+    return dict(row)
+
+
+@app.post("/api/transactions/restore", status_code=201)
+def restore_transaction(body: TransactionRestoreInput):
+    with open_db("거래 내역을 되돌리지 못했습니다.") as conn:
+        with conn:
+            if conn.execute("SELECT 1 FROM transactions WHERE id = ?", (body.id,)).fetchone() is not None:
+                raise ApiError(409, "TRANSACTION_EXISTS")
+            conn.execute(
+                "INSERT INTO transactions (id, date, type, amount, category_id, memo, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    body.id, body.date.isoformat(), body.type, body.amount,
+                    category_id_of(conn, body.type, body.category), body.memo, body.created_at,
+                ),
+            )
+        row = fetch_transaction(conn, body.id)
     return dict(row)
 
 
@@ -423,15 +462,13 @@ def update_transaction(body: TransactionInput, transaction_id: int = PathParam(g
     with open_db("거래 내역을 수정하지 못했습니다.") as conn:
         with conn:
             cursor = conn.execute(
-                "UPDATE transactions SET date = ?, type = ?, amount = ?, category = ?, memo = ? "
+                "UPDATE transactions SET date = ?, type = ?, amount = ?, category_id = ?, memo = ? "
                 "WHERE id = ?",
-                (body.date.isoformat(), body.type, body.amount, body.category, body.memo, transaction_id),
+                (body.date.isoformat(), body.type, body.amount, category_id_of(conn, body.type, body.category), body.memo, transaction_id),
             )
         if cursor.rowcount == 0:
             raise ApiError(404, "TRANSACTION_NOT_FOUND")
-        row = conn.execute(
-            f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE id = ?", (transaction_id,)
-        ).fetchone()
+        row = fetch_transaction(conn, transaction_id)
     return dict(row)
 
 
@@ -462,6 +499,104 @@ def download_backup():
         media_type="application/vnd.sqlite3",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# --- v1.0 CSV 내보내기·앱 안 복원 ---
+
+CSV_HEADER = ["거래일", "유형", "분류", "금액", "메모", "등록 시각"]
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+MAX_BACKUP_BYTES = 100 * 1024 * 1024
+SQLITE_HEADER = b"SQLite format 3\x00"
+REQUIRED_BACKUP_COLUMNS = {"id", "date", "type", "amount", "memo", "created_at"}
+
+
+def csv_text(value):
+    """엑셀이 수식으로 실행하지 않도록 수식 시작 문자 앞에 '를 붙인다 (SPEC FR-18)."""
+    if value and value.startswith(CSV_FORMULA_PREFIXES):
+        return f"'{value}"
+    return value or ""
+
+
+@app.get("/api/export/transactions.csv")
+def export_transactions():
+    filename = datetime.now().strftime("budget-transactions-%Y-%m-%d-%H%M.csv")
+    with open_db("CSV 파일을 만들지 못했습니다.") as conn:
+        rows = conn.execute(f"{TRANSACTION_SELECT} {TRANSACTION_ORDER}").fetchall()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(CSV_HEADER)
+    for row in rows:
+        writer.writerow([
+            row["date"], TYPE_LABELS[row["type"]], csv_text(row["category"]), row["amount"],
+            csv_text(row["memo"]), row["created_at"],
+        ])
+    # 엑셀이 한글을 UTF-8로 읽도록 BOM을 붙인다.
+    return Response(
+        content=("\ufeff" + output.getvalue()).encode("utf-8"),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def check_backup_file(path):
+    """올린 파일을 검사하고 현재 구조로 옮긴다. 문제가 있으면 ApiError, 손상이면 sqlite3 오류를 낸다."""
+    conn = connect(path)
+    try:
+        if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise ApiError(422, "INVALID_BACKUP")
+        columns = table_columns(conn, "transactions")
+        has_category = "category" in columns or ("category_id" in columns and table_columns(conn, "categories"))
+        if not REQUIRED_BACKUP_COLUMNS <= columns or not has_category:
+            raise ApiError(422, "INVALID_BACKUP")
+    finally:
+        conn.close()
+    init_db(path, keep_safety_copy=False)
+    conn = connect(path)
+    try:
+        # 분류가 없는 거래가 있으면 복원 뒤 조회에서 사라지므로 받지 않는다.
+        total = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
+        visible = conn.execute(f"SELECT COUNT(*) FROM {TRANSACTION_FROM}").fetchone()[0]
+    finally:
+        conn.close()
+    if total != visible:
+        raise ApiError(422, "INVALID_BACKUP")
+    return total
+
+
+def replace_database(content):
+    if not content.startswith(SQLITE_HEADER):
+        raise ApiError(422, "INVALID_BACKUP")
+    with tempfile.TemporaryDirectory() as folder:
+        candidate = Path(folder) / "restore.db"
+        candidate.write_bytes(content)
+        try:
+            total = check_backup_file(candidate)
+        except sqlite3.DatabaseError as exc:
+            raise ApiError(422, "INVALID_BACKUP") from exc
+        with open_db("백업을 복원하지 못했습니다.") as conn:
+            safety_copy = save_copy(conn, datetime.now().strftime("budget-before-restore-%Y-%m-%d-%H%M%S.db"))
+            # 파일을 바꿔치기하지 않고 백업 API로 덮어써서, 서버가 켜져 있어도 안전하고 실패하면 원본이 남는다.
+            source = connect(candidate)
+            try:
+                source.backup(conn)
+            finally:
+                source.close()
+    return {"transactions": total, "safety_copy": safety_copy}
+
+
+@app.post("/api/restore")
+async def restore_backup(request: Request):
+    # 다른 사이트의 페이지는 사전 요청 없이 이 형식을 보낼 수 없다 (TRD 15.4절).
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type != "application/octet-stream":
+        raise ApiError(415, "UNSUPPORTED_MEDIA_TYPE")
+    content = bytearray()
+    async for chunk in request.stream():
+        content += chunk
+        if len(content) > MAX_BACKUP_BYTES:
+            raise ApiError(413, "BACKUP_TOO_LARGE")
+    return await run_in_threadpool(replace_database, bytes(content))
 
 
 # --- v0.10 예산 ---
@@ -598,20 +733,17 @@ def apply_recurring(body: RecurringApplyInput):
                     skipped += 1
                     continue
                 cursor = conn.execute(
-                    "INSERT INTO transactions (date, type, amount, category, memo, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO transactions (date, type, amount, category_id, memo, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         f"{year_month}-{min(template['day'], last_day):02d}",
-                        template["type"], template["amount"], template["category"], template["memo"], created_at,
+                        template["type"], template["amount"], template["category_id"], template["memo"], created_at,
                     ),
                 )
                 conn.execute(
                     "INSERT INTO recurring_applied (recurring_id, year_month) VALUES (?, ?)", (template["id"], year_month)
                 )
                 created_ids.append(cursor.lastrowid)
-        created = [
-            dict(conn.execute(f"SELECT {TRANSACTION_COLUMNS} FROM transactions WHERE id = ?", (tid,)).fetchone())
-            for tid in created_ids
-        ]
+        created = [dict(fetch_transaction(conn, tid)) for tid in created_ids]
     return {"year": body.year, "month": body.month, "created": created, "skipped": skipped}
 
 

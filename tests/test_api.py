@@ -6,7 +6,9 @@
 - API-COM-N04(JSON 응답)는 본문이 있는 모든 성공 테스트의 assert_json에서 확인한다.
 """
 
+import csv
 import importlib
+import io
 import re
 import sqlite3
 import sys
@@ -107,7 +109,11 @@ def get_row(db_path, transaction_id):
     conn = REAL_CONNECT(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,)).fetchone()
+        row = conn.execute(
+            "SELECT t.*, c.name AS category FROM transactions t "
+            "LEFT JOIN categories c ON c.id = t.category_id WHERE t.id = ?",
+            (transaction_id,),
+        ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
@@ -368,9 +374,9 @@ def test_api_list_n06_same_created_at_higher_id_first(client, db_path):
         with conn:
             for _ in range(2):
                 conn.execute(
-                    "INSERT INTO transactions (date, type, amount, category, memo, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    ("2026-10-30", "expense", 1000, "식비", None, "2026-10-30T12:00:00.000000"),
+                    "INSERT INTO transactions (date, type, amount, category_id, memo, created_at) "
+                    "VALUES (?, ?, ?, (SELECT id FROM categories WHERE type = 'expense' AND name = '식비'), ?, ?)",
+                    ("2026-10-30", "expense", 1000, None, "2026-10-30T12:00:00.000000"),
                 )
         first_id, second_id = [r[0] for r in conn.execute("SELECT id FROM transactions ORDER BY id")]
     finally:
@@ -872,7 +878,7 @@ def test_api_cren_e09_rollback_on_partial_failure(client, db_path, snack):
     conn = REAL_CONNECT(db_path)
     try:
         conn.execute(
-            "CREATE TRIGGER fail_transaction_update BEFORE UPDATE ON transactions "
+            "CREATE TRIGGER fail_category_update BEFORE UPDATE ON categories "
             "BEGIN SELECT RAISE(ABORT, 'forced failure'); END"
         )
         conn.commit()
@@ -1607,3 +1613,369 @@ def test_api_rec_e07_apply_rolls_back(client, db_path, three):
     assert_error(client.post("/api/recurring/apply", json={"year": 2026, "month": 10}), 500, "DATABASE_ERROR")
     assert count_rows(db_path) == before
     assert count_applied(db_path) == 0
+
+
+# ---------------------------------------------------------------------------
+# 1.17 POST /api/transactions/restore (v1.0)
+# ---------------------------------------------------------------------------
+
+def undo(client, body):
+    return client.post("/api/transactions/restore", json=body)
+
+
+def test_api_undo_n01_restores_same_row(client):
+    t1 = create(client, T1)
+    assert client.delete(f"/api/transactions/{t1['id']}").status_code == 204
+    assert assert_json(undo(client, t1), 201) == t1
+    assert list_month(client, 2026, 10) == [t1]
+
+
+def test_api_undo_n02_keeps_position(client):
+    t1 = create(client, T1)
+    t2 = create(client, T2)
+    before = list_month(client, 2026, 10)
+    client.delete(f"/api/transactions/{t1['id']}")
+    assert_json(undo(client, t1), 201)
+    assert list_month(client, 2026, 10) == before
+    assert before[0]["id"] == t2["id"]
+
+
+def test_api_undo_n03_null_memo(client):
+    t2 = create(client, T2)
+    client.delete(f"/api/transactions/{t2['id']}")
+    assert assert_json(undo(client, t2), 201)["memo"] is None
+
+
+def test_api_undo_e01_already_exists(client, db_path):
+    t1 = create(client, T1)
+    assert_error(undo(client, t1), 409, "TRANSACTION_EXISTS")
+    assert count_rows(db_path) == 1
+
+
+def test_api_undo_e02_category_deleted(client):
+    snack = add_category(client, "expense", "간식")
+    t = create(client, with_fields(category="간식"))
+    client.delete(f"/api/transactions/{t['id']}")
+    assert client.delete(f"/api/categories/{snack['id']}").status_code == 204
+    assert_error(undo(client, t), 422, "INVALID_CATEGORY")
+
+
+@pytest.mark.parametrize("change, code", [
+    ({"id": None}, "MISSING_FIELD"),
+    ({"id": 0}, "INVALID_ID"),
+    ({"id": "1"}, "INVALID_ID"),
+    ({"created_at": None}, "MISSING_FIELD"),
+    ({"created_at": "어제"}, "INVALID_CREATED_AT"),
+    ({"amount": 0}, "INVALID_AMOUNT"),
+])
+def test_api_undo_e03_e05_invalid_body(client, change, code):
+    t1 = create(client, T1)
+    client.delete(f"/api/transactions/{t1['id']}")
+    assert_error(undo(client, {**t1, **change}), 422, code)
+
+
+def test_api_undo_e06_db_failure(client, db_path):
+    t1 = create(client, T1)
+    client.delete(f"/api/transactions/{t1['id']}")
+    conn = REAL_CONNECT(db_path)
+    try:
+        conn.execute(
+            "CREATE TRIGGER fail_insert BEFORE INSERT ON transactions "
+            "BEGIN SELECT RAISE(ABORT, 'forced failure'); END"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert_error(undo(client, t1), 500, "DATABASE_ERROR")
+
+
+# ---------------------------------------------------------------------------
+# 1.18 GET /api/export/transactions.csv (v1.0)
+# ---------------------------------------------------------------------------
+
+CSV_FILENAME = re.compile(r'attachment; filename="budget-transactions-\d{4}-\d{2}-\d{2}-\d{4}\.csv"')
+CSV_HEADER = ["거래일", "유형", "분류", "금액", "메모", "등록 시각"]
+
+
+def export_csv(client):
+    res = client.get("/api/export/transactions.csv")
+    assert res.status_code == 200, res.text
+    assert res.content.startswith(b"\xef\xbb\xbf")
+    return res, list(csv.reader(io.StringIO(res.content.decode("utf-8-sig"), newline="")))
+
+
+def test_api_csv_n01_response(client):
+    res, _ = export_csv(client)
+    assert res.headers["content-type"].startswith("text/csv")
+    assert CSV_FILENAME.fullmatch(res.headers["content-disposition"])
+
+
+def test_api_csv_n02_content(client):
+    for t in (T1, T2, T3, T4, T5):
+        create(client, t)
+    _, rows = export_csv(client)
+    assert rows[0] == CSV_HEADER
+    assert [row[0] for row in rows[1:]] == ["2026-11-01", "2026-10-30", "2026-10-30", "2026-10-01", "2026-09-30"]
+    assert rows[1][:5] == ["2026-11-01", "수입", "용돈", "100000", ""]
+    assert rows[3][:5] == ["2026-10-30", "지출", "식비", "12500", "점심"]
+
+
+def test_api_csv_n03_empty(client):
+    _, rows = export_csv(client)
+    assert rows == [CSV_HEADER]
+
+
+def test_api_csv_n04_special_characters(client):
+    memo = '콤마, "따옴표"\n줄바꿈'
+    create(client, with_fields(memo=memo))
+    _, rows = export_csv(client)
+    assert rows[1][4] == memo
+
+
+@pytest.mark.parametrize("memo", ["=SUM(A1)", "+1", "-1", "@x"])
+def test_api_csv_n05_formula_guard(client, memo):
+    create(client, with_fields(memo=memo))
+    _, rows = export_csv(client)
+    assert rows[1][4] == f"'{memo}"
+
+
+def test_api_csv_e01_db_error(client, broken_db):
+    assert_error(client.get("/api/export/transactions.csv"), 500, "DATABASE_ERROR")
+
+
+def test_api_csv_e02_method_not_allowed(client):
+    assert_error(client.post("/api/export/transactions.csv"), 405, "METHOD_NOT_ALLOWED")
+
+
+# ---------------------------------------------------------------------------
+# 1.19 POST /api/restore (v1.0)
+# ---------------------------------------------------------------------------
+
+OCTET = {"Content-Type": "application/octet-stream"}
+
+
+def restore_db(client, content, headers=OCTET):
+    return client.post("/api/restore", content=content, headers=headers)
+
+
+def safety_copies(db_path):
+    return sorted(db_path.parent.glob("budget-before-restore-*.db"))
+
+
+def test_api_rst_n01_restores_everything(client, tmp_path, recurring_ids):
+    create(client, T1)
+    add_category(client, "expense", "간식")
+    put_budget(client, recurring_ids["housing"], 600000)
+    add_recurring(client, r_body(recurring_ids, "R1"))
+    before = (
+        list_month(client, 2026, 10), get_categories(client), get_budgets(client),
+        list_recurring(client, year=2026, month=10),
+    )
+    _, path = download_backup(client, tmp_path)
+
+    client.delete(f"/api/transactions/{before[0][0]['id']}")
+    client.delete(f"/api/budgets/{recurring_ids['housing']}")
+    client.delete(f"/api/recurring/{before[3][0]['id']}")
+
+    body = assert_json(restore_db(client, path.read_bytes()), 200)
+    assert body["transactions"] == 1
+    assert re.fullmatch(r"budget-before-restore-\d{4}-\d{2}-\d{2}-\d{6}\.db", body["safety_copy"])
+    assert (
+        list_month(client, 2026, 10), get_categories(client), get_budgets(client),
+        list_recurring(client, year=2026, month=10),
+    ) == before
+
+
+def test_api_rst_n02_applied_records(client, tmp_path, recurring_ids):
+    add_recurring(client, r_body(recurring_ids, "R1"))
+    apply_recurring(client, 2026, 10)
+    _, path = download_backup(client, tmp_path)
+    assert_json(restore_db(client, path.read_bytes()), 200)
+    assert apply_recurring(client, 2026, 10)["created"] == []
+
+
+def test_api_rst_n03_safety_copy(client, db_path, tmp_path):
+    _, path = download_backup(client, tmp_path)
+    t1 = create(client, T1)
+    assert_json(restore_db(client, path.read_bytes()), 200)
+    assert list_month(client, 2026, 10) == []
+    [copy] = safety_copies(db_path)
+    assert [row["id"] for row in table_rows(copy, "transactions")] == [t1["id"]]
+
+
+def test_api_rst_n04_legacy_backup(client, db_path, tmp_path):
+    legacy = tmp_path / "legacy-backup.db"
+    make_legacy_db(legacy)
+    assert_json(restore_db(client, legacy.read_bytes()), 200)
+    [row] = list_month(client, 2026, 10)
+    assert (row["category"], row["memo"]) == ("식비", "점심")
+    assert "category" not in table_columns(db_path, "transactions")
+    assert "category" in table_columns(legacy, "transactions")
+
+
+def test_api_rst_n05_write_after_restore(client, tmp_path):
+    _, path = download_backup(client, tmp_path)
+    assert_json(restore_db(client, path.read_bytes()), 200)
+    create(client, T1)
+    assert len(list_month(client, 2026, 10)) == 1
+
+
+@pytest.mark.parametrize("content", [
+    pytest.param(b"not a database", id="E01-not-sqlite"),
+    pytest.param(b"SQLite format 3\x00" + b"\xff" * 2048, id="E02-garbage"),
+    pytest.param(b"", id="E06-empty"),
+])
+def test_api_rst_e01_e02_e06_invalid_file(client, db_path, content):
+    t1 = create(client, T1)
+    assert_error(restore_db(client, content), 422, "INVALID_BACKUP")
+    assert list_month(client, 2026, 10) == [t1]
+    assert safety_copies(db_path) == []
+
+
+def test_api_rst_e03_no_transactions_table(client, db_path, tmp_path):
+    empty = tmp_path / "empty.db"
+    conn = REAL_CONNECT(empty)
+    try:
+        conn.execute("CREATE TABLE other (id INTEGER)")
+        conn.commit()
+    finally:
+        conn.close()
+    t1 = create(client, T1)
+    assert_error(restore_db(client, empty.read_bytes()), 422, "INVALID_BACKUP")
+    assert list_month(client, 2026, 10) == [t1]
+
+
+@pytest.mark.parametrize("content_type", ["application/json", "text/plain"])
+def test_api_rst_e04_content_type(client, tmp_path, content_type):
+    _, path = download_backup(client, tmp_path)
+    t1 = create(client, T1)
+    assert_error(restore_db(client, path.read_bytes(), {"Content-Type": content_type}), 415, "UNSUPPORTED_MEDIA_TYPE")
+    assert list_month(client, 2026, 10) == [t1]
+
+
+def test_api_rst_e05_too_large(client, tmp_path, monkeypatch):
+    _, path = download_backup(client, tmp_path)
+    t1 = create(client, T1)
+    monkeypatch.setattr("app.main.MAX_BACKUP_BYTES", 10)
+    assert_error(restore_db(client, path.read_bytes()), 413, "BACKUP_TOO_LARGE")
+    assert list_month(client, 2026, 10) == [t1]
+
+
+# ---------------------------------------------------------------------------
+# 1.20 거래 분류 ID 이관 (v1.0)
+# ---------------------------------------------------------------------------
+
+LEGACY_SCHEMA = """
+CREATE TABLE transactions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT    NOT NULL,
+    type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
+    amount      INTEGER NOT NULL CHECK (amount >= 1),
+    category    TEXT    NOT NULL,
+    memo        TEXT,
+    created_at  TEXT    NOT NULL
+);
+CREATE TABLE categories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
+    name        TEXT    NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 20),
+    is_default  INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    UNIQUE (type, name)
+);
+"""
+
+
+def make_legacy_db(path, rows=(("2026-10-30", "expense", 12500, "식비", "점심"),)):
+    """v0.11 구조(거래가 분류 이름을 저장) DB를 만든다."""
+    conn = REAL_CONNECT(path)
+    try:
+        conn.executescript(LEGACY_SCHEMA)
+        with conn:
+            conn.executemany(
+                "INSERT INTO transactions (date, type, amount, category, memo, created_at) "
+                "VALUES (?, ?, ?, ?, ?, '2026-10-30T12:00:00.000000')",
+                rows,
+            )
+    finally:
+        conn.close()
+
+
+def table_columns(path, table):
+    conn = REAL_CONNECT(path)
+    try:
+        return [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+    finally:
+        conn.close()
+
+
+def test_api_mig_n01_migrates(db_path):
+    make_legacy_db(db_path)
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        [row] = list_month(c, 2026, 10)
+    assert row == {
+        "id": 1, "date": "2026-10-30", "type": "expense", "amount": 12500,
+        "category": "식비", "memo": "점심", "created_at": "2026-10-30T12:00:00.000000",
+    }
+    columns = table_columns(db_path, "transactions")
+    assert "category" not in columns and "category_id" in columns
+
+
+def test_api_mig_n02_unknown_name_becomes_user_category(db_path):
+    make_legacy_db(db_path, [("2026-10-30", "expense", 1000, "옛분류", None)])
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        assert list_month(c, 2026, 10)[0]["category"] == "옛분류"
+        assert find_category(c, "expense", "옛분류")["is_default"] is False
+
+
+def test_api_mig_n03_safety_copy(db_path):
+    make_legacy_db(db_path)
+    with TestClient(fresh_app(), raise_server_exceptions=False):
+        pass
+    copy = db_path.parent / "budget-before-v1.0.db"
+    assert "category" in table_columns(copy, "transactions")
+    assert table_rows(copy, "transactions")[0]["category"] == "식비"
+
+
+def test_api_mig_n04_restart_is_stable(db_path):
+    make_legacy_db(db_path)
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        first = list_month(c, 2026, 10)
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        assert list_month(c, 2026, 10) == first
+    assert len(list(db_path.parent.glob("budget-before-v1.0*"))) == 1
+
+
+def test_api_mig_n05_new_db_has_no_copy(client, db_path):
+    assert "category_id" in table_columns(db_path, "transactions")
+    assert list(db_path.parent.glob("budget-before-v1.0*")) == []
+
+
+def test_api_mig_n06_ids_not_reused(db_path):
+    make_legacy_db(db_path, [("2026-10-30", "expense", 1000, "식비", None), ("2026-10-30", "expense", 2000, "식비", None)])
+    conn = REAL_CONNECT(db_path)
+    try:
+        with conn:
+            conn.execute("DELETE FROM transactions WHERE id = 2")
+    finally:
+        conn.close()
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        assert create(c, T1)["id"] == 3
+
+
+def test_api_mig_n07_rename_after_migration(db_path):
+    make_legacy_db(db_path, [("2026-10-30", "expense", 1000, "옛분류", None)])
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        category = find_category(c, "expense", "옛분류")
+        assert_json(rename(c, category["id"], {"name": "새분류"}), 200)
+        assert list_month(c, 2026, 10)[0]["category"] == "새분류"
+
+
+def test_api_mig_e01_failure_keeps_original(db_path):
+    # 분류 이름 제한(20자)을 넘는 이름을 옮기면 CHECK 제약으로 실패한다.
+    long_name = "가" * 21
+    make_legacy_db(db_path, [("2026-10-30", "expense", 1000, long_name, None)])
+    with pytest.raises(sqlite3.IntegrityError):
+        with TestClient(fresh_app(), raise_server_exceptions=False):
+            pass
+    assert "category" in table_columns(db_path, "transactions")
+    assert table_rows(db_path, "transactions")[0]["category"] == long_name

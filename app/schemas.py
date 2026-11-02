@@ -2,6 +2,7 @@
 
 import re
 from datetime import date as Date
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, Field, StrictInt, StrictStr, ValidationInfo, field_validator
@@ -11,6 +12,9 @@ from app.db import category_exists, find_category_by_id
 
 # 브라우저 JavaScript가 정확히 다룰 수 있는 가장 큰 정수 (Number.MAX_SAFE_INTEGER)
 MAX_AMOUNT = 9007199254740991
+
+# SQLite INTEGER의 최대값
+MAX_ID = 2**63 - 1
 
 DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -50,6 +54,22 @@ class TransactionInput(BaseModel):
     @classmethod
     def normalize_memo(cls, value):
         return normalize_memo(value)
+
+
+class TransactionRestoreInput(TransactionInput):
+    """삭제 되돌리기 본문 (API_SPEC 3.20절). 삭제 전의 ID와 등록 시각을 그대로 받는다."""
+
+    id: StrictInt = Field(ge=1, le=MAX_ID)
+    created_at: StrictStr
+
+    @field_validator("created_at")
+    @classmethod
+    def check_created_at(cls, value):
+        try:
+            datetime.fromisoformat(value)
+        except ValueError:
+            raise ValueError("등록 시각이 올바르지 않습니다.") from None
+        return value
 
 
 def normalize_memo(value):

@@ -8,16 +8,18 @@ from app.categories import DEFAULT_CATEGORIES
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "budget.db"
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS transactions (
+TRANSACTIONS_COLUMNS = """
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     date        TEXT    NOT NULL,
     type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
     amount      INTEGER NOT NULL CHECK (amount >= 1),
-    category    TEXT    NOT NULL,
+    category_id INTEGER NOT NULL,
     memo        TEXT,
     created_at  TEXT    NOT NULL
-);
+"""
+
+SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS transactions ({TRANSACTIONS_COLUMNS});
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 
@@ -59,22 +61,73 @@ def get_db_path():
     return os.environ.get("BUDGET_DB_PATH", str(DEFAULT_DB_PATH))
 
 
-def connect():
-    conn = sqlite3.connect(get_db_path())
+def connect(path=None):
+    conn = sqlite3.connect(path or get_db_path())
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db():
-    """테이블을 만들고 기본 분류를 넣는다. MVP 시절 DB에서도 그대로 동작한다."""
-    conn = connect()
+def table_columns(conn, table):
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def save_copy(conn, filename):
+    """지금 DB의 사본을 DB 파일 옆에 남기고 파일 이름을 돌려준다. 이미 있는 사본은 덮어쓰지 않는다."""
+    first = Path(get_db_path()).parent / filename
+    target, number = first, 0
+    while target.exists():
+        number += 1
+        target = first.with_name(f"{first.stem}-{number}{first.suffix}")
+    copy = sqlite3.connect(target)
     try:
+        conn.backup(copy)
+    finally:
+        copy.close()
+    return target.name
+
+
+def migrate_transactions(conn):
+    """v1.0: 거래의 분류를 이름에서 분류 ID로 옮긴다 (TRD 15.1절). 실패하면 모두 롤백된다."""
+    sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'transactions'").fetchone()
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        # 분류 목록에 없는 이름의 거래가 조회에서 사라지지 않도록 사용자 분류로 추가한다.
+        # OR IGNORE는 CHECK 위반도 건너뛰어 거래가 사라지므로 쓰지 않는다. 위반하면 오류로 멈춘다.
+        conn.execute(
+            "INSERT INTO categories (type, name, is_default) "
+            "SELECT DISTINCT t.type, t.category, 0 FROM transactions t "
+            "WHERE NOT EXISTS (SELECT 1 FROM categories c WHERE c.type = t.type AND c.name = t.category)"
+        )
+        conn.execute(f"CREATE TABLE transactions_new ({TRANSACTIONS_COLUMNS})")
+        conn.execute(
+            "INSERT INTO transactions_new (id, date, type, amount, category_id, memo, created_at) "
+            "SELECT t.id, t.date, t.type, t.amount, c.id, t.memo, t.created_at "
+            "FROM transactions t JOIN categories c ON c.type = t.type AND c.name = t.category"
+        )
+        conn.execute("DROP TABLE transactions")
+        conn.execute("ALTER TABLE transactions_new RENAME TO transactions")
+        conn.execute("CREATE INDEX idx_transactions_date ON transactions (date)")
+        # 지워진 거래의 ID를 다시 쓰지 않도록 AUTOINCREMENT 값을 이어받는다.
+        if sequence is not None:
+            conn.execute("DELETE FROM sqlite_sequence WHERE name = 'transactions'")
+            conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('transactions', ?)", (sequence[0],))
+
+
+def init_db(path=None, keep_safety_copy=True):
+    """테이블을 만들고 기본 분류를 넣는다. 이전 버전 DB는 현재 구조로 옮긴다."""
+    conn = connect(path)
+    try:
+        needs_migration = "category" in table_columns(conn, "transactions")
+        if needs_migration and keep_safety_copy:
+            save_copy(conn, "budget-before-v1.0.db")
         conn.executescript(SCHEMA)
         with conn:
             conn.executemany(
                 "INSERT OR IGNORE INTO categories (type, name, is_default) VALUES (?, ?, 1)",
                 [(type_, name) for type_, names in DEFAULT_CATEGORIES.items() for name in names],
             )
+        if needs_migration:
+            migrate_transactions(conn)
     finally:
         conn.close()
 
