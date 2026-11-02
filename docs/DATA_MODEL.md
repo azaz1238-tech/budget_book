@@ -22,7 +22,7 @@
 | `date` | `TEXT` | `NOT NULL`, `YYYY-MM-DD` 형식 | 거래가 발생한 날짜. 예: `2026-10-30` |
 | `type` | `TEXT` | `NOT NULL`, `CHECK (type IN ('income', 'expense'))` | 거래 유형. `income`=수입, `expense`=지출 |
 | `amount` | `INTEGER` | `NOT NULL`, `CHECK (amount >= 1)`, 9,007,199,254,740,991 이하 (서버 코드에서 검사) | 원 단위 금액. 항상 양의 정수로 저장하고, 수입·지출 구분은 `type`으로 한다. 최대값은 브라우저 JavaScript가 정확히 다룰 수 있는 가장 큰 정수다. |
-| `category` | `TEXT` | `NOT NULL`, `type`에 해당하는 고정 분류 중 하나 (서버 코드에서 검사). v0.4부터는 `categories`에 같은 `(type, name)`이 있어야 함 | 거래 분류 문자열. 예: `식비` |
+| `category_id` | `INTEGER` | `NOT NULL`, `categories.id` (서버 코드에서 검사). `categories.type`이 거래의 `type`과 같아야 함 | 거래 분류. v1.0 전에는 이름 문자열 `category`였다. (9절) |
 | `memo` | `TEXT` | `NULL` 허용 | 선택 메모. 빈 값은 `NULL`로 저장한다. |
 | `created_at` | `TEXT` | `NOT NULL`, ISO 8601 형식 | 서버가 등록 시 자동 기록하는 시각. 사용자가 입력·수정할 수 없다. 예: `2026-10-30T12:34:56.123456` |
 
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     date        TEXT    NOT NULL,
     type        TEXT    NOT NULL CHECK (type IN ('income', 'expense')),
     amount      INTEGER NOT NULL CHECK (amount >= 1),
-    category    TEXT    NOT NULL,
+    category_id INTEGER NOT NULL,
     memo        TEXT,
     created_at  TEXT    NOT NULL
 );
@@ -168,10 +168,10 @@ const october: MonthlySummary = {
 
 ### 6.2 `transactions`와의 관계
 
-- 외래 키 없이 `transactions.(type, category)` = `categories.(type, name)`으로 연결한다. (이유: TRD 11.1)
-- **이름 수정**: `categories.name`을 바꿀 때 같은 트랜잭션에서 `transactions`의 `(type, 옛 이름)` 행을 모두 새 이름으로 바꾼다.
-- **삭제**: `transactions`에 `(type, name)` 행이 1개 이상이면 삭제하지 않는다.
-- 위 두 규칙 덕분에 모든 거래의 `(type, category)`는 항상 `categories`에 존재한다.
+- 외래 키 없이 `transactions.category_id` = `categories.id`로 연결한다. (v1.0, 9절. v0.4 ~ v0.11은 `(type, category)` = `(type, name)`이었다)
+- **이름 수정**: `categories.name`만 바꾼다. 거래는 ID로 연결되어 있어 자동으로 새 이름으로 보인다.
+- **삭제**: `transactions`에 그 `category_id` 행이 1개 이상이면 삭제하지 않는다.
+- 위 규칙 덕분에 모든 거래의 `category_id`는 항상 `categories`에 존재한다.
 
 ### 6.3 DDL과 초기 데이터
 
@@ -358,3 +358,11 @@ type RecurringApplyResult = {
 ```
 
 - `RecurringTransaction` 응답에는 `created_at`을 넣지 않는다. 목록 정렬에만 쓴다.
+
+## 9. v1.0: `transactions.category_id` 이관
+
+- 거래의 분류를 이름에서 분류 ID로 옮긴다. API의 `Transaction.category`는 JOIN한 이름이므로 TypeScript 타입과 응답은 바뀌지 않는다.
+- 이전 구조 DB는 서버 시작과 앱 안 복원 때 자동으로 옮긴다. 순서와 실패 처리는 TRD 15.1절을 따른다.
+- 예산, 고정 거래 틀, 불러온 기록은 바뀌지 않는다.
+- 삭제 되돌리기, CSV 내보내기는 저장 구조를 바꾸지 않는다.
+- 안전 사본(`budget-before-v1.0*.db`, `budget-before-restore-*.db`)은 앱이 지우지 않으며 필요 없으면 직접 지운다. `.gitignore`의 `*.db`로 git에서 제외된다.

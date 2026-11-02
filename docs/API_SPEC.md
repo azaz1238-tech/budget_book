@@ -35,6 +35,9 @@
 | PUT | `/api/recurring/{id}` | 고정 거래 수정 (v0.11) |
 | DELETE | `/api/recurring/{id}` | 고정 거래 삭제 (v0.11) |
 | POST | `/api/recurring/apply` | 선택한 달에 고정 거래 불러오기 (v0.11) |
+| POST | `/api/transactions/restore` | 삭제한 거래 되돌리기 (v1.0) |
+| GET | `/api/export/transactions.csv` | 전체 거래 CSV 다운로드 (v1.0) |
+| POST | `/api/restore` | 백업 파일로 데이터베이스 복원 (v1.0) |
 
 ### 1.2 에러 형식
 
@@ -81,6 +84,11 @@
 | `BUDGET_NOT_FOUND` | 404 | (v0.10) 예산이 없는 분류의 예산을 해제하려 함 |
 | `INVALID_DAY` | 422 | (v0.11) 고정 거래의 `day`가 1~31 정수가 아님 |
 | `RECURRING_NOT_FOUND` | 404 | (v0.11) 해당 `id`의 고정 거래가 없음 |
+| `INVALID_CREATED_AT` | 422 | (v1.0) 되돌리기 본문의 `created_at`이 ISO 8601 시각이 아님 |
+| `TRANSACTION_EXISTS` | 409 | (v1.0) 되돌리려는 `id`의 거래가 이미 있음 |
+| `INVALID_BACKUP` | 422 | (v1.0) 복원 파일이 SQLite 파일이 아니거나, 손상되었거나, 거래 테이블이 없음 |
+| `BACKUP_TOO_LARGE` | 413 | (v1.0) 복원 파일이 100MB를 넘음 |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | (v1.0) 복원 요청의 `Content-Type`이 `application/octet-stream`이 아님 |
 | `NOT_FOUND` | 404 | 존재하지 않는 API 경로 |
 | `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 지원하지 않는 메서드 (예: `GET /api/transactions/1`, `PATCH /api/categories`) |
 | `DATABASE_ERROR` | 500 | `budget.db` 읽기·쓰기 실패 |
@@ -580,7 +588,7 @@ Content-Disposition: attachment; filename="budget-backup-2026-10-30-1530.db"
 ```
 
 - 파일 이름: `budget-backup-YYYY-MM-DD-HHMM.db` (서버의 현재 날짜와 시각, 24시간제)
-- 받은 파일은 이름을 `budget.db`로 바꿔 그대로 사용할 수 있다. (수동 복원 방법은 README)
+- 받은 파일은 이름을 `budget.db`로 바꿔 그대로 사용할 수 있다. (수동 복원 방법은 README, 앱 안 복원은 3.22절)
 
 **에러**
 
@@ -806,6 +814,64 @@ GET /api/recurring?year=2026&month=10
 | DB 쓰기 실패 | 500 | `DATABASE_ERROR` | `고정 거래를 불러오지 못했습니다.` (아무것도 추가되지 않음) |
 
 - (v0.11) `DELETE /api/categories/{id}`의 `CATEGORY_IN_USE` 검사에 고정 거래를 더한다. 메시지 예: `이 분류를 사용하는 거래 2건, 고정 거래 1건이 있어 삭제할 수 없습니다.` (고정 거래가 없으면 v0.4 메시지 그대로)
+
+### 3.20 `POST /api/transactions/restore` — 삭제한 거래 되돌리기 (v1.0)
+
+삭제 직후 화면이 들고 있던 거래를 같은 ID와 등록 시각으로 다시 넣는다.
+
+**요청 본문**: `Transaction` 전체 (`id`, `date`, `type`, `amount`, `category`, `memo`, `created_at`)
+
+**응답 `201 Created`**: 되돌린 `Transaction`
+
+- 검사 순서: `id` → `date` → `type` → `amount` → `category` → `memo` → `created_at`
+- `id`는 1 ~ 9,223,372,036,854,775,807 범위의 정수, `created_at`은 ISO 8601 시각이어야 한다. 나머지 규칙은 등록(2.2절)과 같다.
+
+| 상황 | 상태 코드 | code |
+|---|---|---|
+| 같은 `id`의 거래가 이미 있음 | 409 | `TRANSACTION_EXISTS` |
+| 그 사이 분류가 삭제됨 | 422 | `INVALID_CATEGORY` |
+| `id`가 없거나 범위 밖 | 422 | `MISSING_FIELD` / `INVALID_ID` |
+| `created_at`이 없거나 형식이 틀림 | 422 | `MISSING_FIELD` / `INVALID_CREATED_AT` |
+| DB 오류 | 500 | `DATABASE_ERROR` |
+
+### 3.21 `GET /api/export/transactions.csv` — 전체 거래 CSV 다운로드 (v1.0)
+
+**응답 `200 OK`**
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="budget-transactions-2026-11-02-1530.csv"
+```
+
+```csv
+거래일,유형,분류,금액,메모,등록 시각
+2026-10-30,지출,식비,12500,점심,2026-10-30T12:34:56.123456
+```
+
+- 본문은 UTF-8 BOM으로 시작하고 줄 끝은 CRLF다.
+- 정렬은 목록과 같다. 거래가 없으면 머리글만 있다.
+- 분류·메모가 `=`, `+`, `-`, `@`, 탭, 줄바꿈 문자로 시작하면 앞에 `'`를 붙인다. (SPEC FR-18)
+- DB 오류는 500 `DATABASE_ERROR`다.
+
+### 3.22 `POST /api/restore` — 백업 파일로 복원 (v1.0)
+
+**요청**: `Content-Type: application/octet-stream`, 본문은 백업 파일 바이트 그대로
+
+**응답 `200 OK`**
+
+```json
+{ "transactions": 42, "safety_copy": "budget-before-restore-2026-11-02-153000.db" }
+```
+
+| 상황 | 상태 코드 | code |
+|---|---|---|
+| `Content-Type`이 다름 | 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| 100MB 초과 | 413 | `BACKUP_TOO_LARGE` |
+| SQLite 파일이 아니거나, 손상되었거나, `transactions` 테이블이 없음 | 422 | `INVALID_BACKUP` |
+| 지금 DB의 사본이나 교체 실패 | 500 | `DATABASE_ERROR` |
+
+- 어느 경우든 실패하면 지금 데이터는 바뀌지 않는다.
+- 이전 구조의 백업은 현재 구조로 옮긴 뒤 넣는다.
 
 ## 4. 구현 참고
 
