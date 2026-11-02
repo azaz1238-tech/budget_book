@@ -1036,6 +1036,22 @@ def test_api_bak_n05_empty_db(client, tmp_path):
     assert len(table_rows(path, "categories")) == 10
 
 
+def test_api_bak_n06_budgets_and_recurring_restored(client, tmp_path, monkeypatch, recurring_ids):
+    put_budget(client, recurring_ids["housing"], 600000)
+    add_recurring(client, r_body(recurring_ids, "R1"))
+    apply_recurring(client, 2026, 10)
+    original_budgets = get_budgets(client)
+    original_recurring = list_recurring(client, year=2026, month=10)
+    _, path = download_backup(client, tmp_path)
+
+    monkeypatch.setenv("BUDGET_DB_PATH", str(path))
+    with TestClient(fresh_app(), raise_server_exceptions=False) as restored:
+        assert get_budgets(restored) == original_budgets
+        assert list_recurring(restored, year=2026, month=10) == original_recurring
+        body = apply_recurring(restored, 2026, 10)
+        assert body["created"] == [] and body["skipped"] == 1
+
+
 def test_api_bak_e01_db_error(client, broken_db):
     assert_error(client.get("/api/backup"), 500, "DATABASE_ERROR")
 
