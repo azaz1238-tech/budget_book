@@ -123,7 +123,7 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="가계부", lifespan=lifespan)
+app = FastAPI(title="가계부", version="1.0.0", lifespan=lifespan)
 
 
 @app.exception_handler(ApiError)
