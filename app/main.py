@@ -2,6 +2,7 @@ import calendar
 import csv
 import io
 import logging
+import os
 import sqlite3
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
@@ -31,7 +32,10 @@ from app.schemas import (
 
 logger = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+# 빌드한 React 화면. 테스트에서는 BUDGET_FRONTEND_DIST로 임시 폴더를 지정한다.
+FRONTEND_DIST = Path(
+    os.environ.get("BUDGET_FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist")
+)
 
 # 입력값 검사 순서 (API_SPEC 1.2절). 에러가 여러 개면 이 순서로 첫 번째만 돌려준다.
 # 거래: date → type → amount → category → memo, 분류: type → name,
@@ -98,6 +102,7 @@ MESSAGES = {
     "METHOD_NOT_ALLOWED": "지원하지 않는 요청 방식입니다.",
     "DATABASE_ERROR": "데이터베이스 작업에 실패했습니다.",
     "INTERNAL_ERROR": "서버에서 오류가 발생했습니다.",
+    "FRONTEND_NOT_BUILT": "화면이 빌드되지 않았습니다. npm --prefix frontend run build를 실행하세요.",
 }
 
 
@@ -749,9 +754,13 @@ def apply_recurring(body: RecurringApplyInput):
 
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    page = FRONTEND_DIST / "index.html"
+    if not page.is_file():
+        raise ApiError(503, "FRONTEND_NOT_BUILT")
+    return FileResponse(page)
 
 
-# 화면 파일은 /static 아래에서만 제공한다. "/"에 마운트하면 /api 경로의 지원하지 않는
+# 빌드한 JS·CSS는 /assets 아래에서만 제공한다. "/"에 마운트하면 /api 경로의 지원하지 않는
 # 메서드 요청(예: GET /api/transactions/1)까지 화면 파일 쪽으로 넘어가 405 대신 404가 된다.
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# 빌드 전에도 서버와 API가 켜지도록 폴더 확인은 요청 때 한다.
+app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets", check_dir=False), name="assets")

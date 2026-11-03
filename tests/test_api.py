@@ -167,10 +167,40 @@ INVALID_BODY_CASES = [
 # 1.1 공통
 # ---------------------------------------------------------------------------
 
-def test_api_com_n01_index_page(client):
-    res = client.get("/")
+@pytest.fixture
+def built_frontend(tmp_path, monkeypatch):
+    """빌드한 화면 대신 쓰는 임시 폴더. 실제 frontend/dist가 없어도 테스트가 돌아간다."""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>가계부</title>", encoding="utf-8")
+    (dist / "assets" / "index-abc.js").write_text("console.log(1);", encoding="utf-8")
+    monkeypatch.setenv("BUDGET_FRONTEND_DIST", str(dist))
+    return dist
+
+
+def test_api_com_n01_index_page(db_path, built_frontend):
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        res = c.get("/")
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("text/html")
+    assert "가계부" in res.text
+
+
+def test_api_com_n05_built_assets(db_path, built_frontend):
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        res = c.get("/assets/index-abc.js")
+        missing = c.get("/assets/none.js")
+    assert res.status_code == 200
+    assert res.text == "console.log(1);"
+    assert missing.status_code == 404
+
+
+def test_api_com_e03_frontend_not_built(db_path, tmp_path, monkeypatch):
+    monkeypatch.setenv("BUDGET_FRONTEND_DIST", str(tmp_path / "no-dist"))
+    with TestClient(fresh_app(), raise_server_exceptions=False) as c:
+        assert_error(c.get("/"), 503, "FRONTEND_NOT_BUILT")
+        assert "npm --prefix frontend run build" in c.get("/").json()["error"]["message"]
+        assert_json(c.get("/api/categories"), 200)
 
 
 def test_api_com_n02_db_initialized_on_startup(client, db_path):
