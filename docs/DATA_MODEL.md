@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 
 ## 5. TypeScript 타입 예시
 
-> 프로젝트 프런트엔드는 순수 JavaScript를 사용한다. 아래 타입은 API로 주고받는 데이터의 모양을 보여 주기 위한 참고용 예시다.
+> 프로젝트 프런트엔드는 React + JavaScript(TypeScript 미사용)를 사용한다. 아래 타입은 API로 주고받는 데이터의 모양을 보여 주기 위한 참고용 예시다.
 
 ```ts
 /** 거래 유형 */

@@ -93,6 +93,7 @@
 | `METHOD_NOT_ALLOWED` | 405 | 경로는 있지만 지원하지 않는 메서드 (예: `GET /api/transactions/1`, `PATCH /api/categories`) |
 | `DATABASE_ERROR` | 500 | `budget.db` 읽기·쓰기 실패 |
 | `INTERNAL_ERROR` | 500 | 그 밖의 예상하지 못한 서버 오류 |
+| `FRONTEND_NOT_BUILT` | 503 | `GET /` 요청인데 화면을 빌드한 파일(`frontend/dist/index.html`)이 없음. API에는 영향 없음 |
 
 - 500 에러는 서버 로그에 원인을 기록하고, 응답 `message`에는 내부 정보(SQL, 파일 경로 등)를 넣지 않는다.
 

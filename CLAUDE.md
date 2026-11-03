@@ -2,19 +2,19 @@
 
 ## 프로젝트 개요
 
-혼자 사용하는 간단한 가계부 웹 앱. 로그인 없이 브라우저에서 수입과 지출을 관리하고 월별 합계를 확인한다. FastAPI와 SQLite를 사용하며 거래 내역은 서버 컴퓨터의 `budget.db` 파일에 저장한다.
+혼자 사용하는 간단한 가계부 웹 앱. 로그인 없이 브라우저에서 수입과 지출을 관리하고 월별 합계를 확인한다. React + Vite, FastAPI, SQLite를 사용하며 거래 내역은 서버 컴퓨터의 `budget.db` 파일에 저장한다.
 
 ## 기술 스택
 
 - 언어: Python 3.12 (백엔드), JavaScript (프런트엔드)
 - 백엔드: FastAPI
 - 데이터베이스: SQLite (`budget.db`)
-- 프런트엔드: HTML + CSS + 순수 JavaScript
+- 프런트엔드: React + Vite (JSX, CSS). TypeScript, 상태 관리·라우터·UI 라이브러리는 쓰지 않는다.
 
 ## 폴더 구조
 
 - app/        : FastAPI 서버 (main.py, db.py, schemas.py, categories.py)
-- static/     : 화면 (index.html, app.js, style.css)
+- frontend/   : React + Vite 화면 (src/App.jsx, src/components/, src/hooks/, src/lib/, src/styles.css). 빌드 결과 frontend/dist는 FastAPI가 제공하며 git에 넣지 않는다.
 - tests/      : pytest 테스트
 - docs/       : 프로젝트 아이디어와 기능 명세
 - 세부 구조는 docs/TRD.md 3절을 따른다.
@@ -53,7 +53,10 @@
 
 ## 자주 쓰는 명령
 
-- 의존성 설치: `.venv\Scripts\python -m pip install -r requirements.txt`
+- 의존성 설치: `.venv\Scripts\python -m pip install -r requirements.txt`, `npm --prefix frontend install`
+- 화면 빌드: `npm --prefix frontend run build` (화면 코드를 바꾸면 다시 실행한다)
 - 서버 실행: `.venv\Scripts\python -m uvicorn app.main:app --reload` (http://127.0.0.1:8000)
+- 화면 개발 서버: `npm --prefix frontend run dev` (http://127.0.0.1:5173, `/api`는 FastAPI로 전달. 8000이 아닌 포트면 `BUDGET_API_URL`로 지정)
 - API 테스트: `.venv\Scripts\python -m pytest tests`
+- 화면 점검: `npm --prefix frontend run e2e` (빌드 후 실제 Chrome으로 확인. 임시 DB를 쓴다. 화면을 고치면 실행한다)
 - 패키지 설정 및 개발 도구가 추가되면 해당 명령을 문서화한다.

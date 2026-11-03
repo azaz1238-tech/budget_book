@@ -7,9 +7,11 @@
 
 ## 1. 개요
 
-- 화면은 한 페이지(`static/index.html`)이고, 화면 조각(컴포넌트)은 `static/app.js`의 **순수 JavaScript 함수**로 만든다. React 같은 프레임워크는 쓰지 않는다.
-- 각 컴포넌트는 "Props 객체를 받아 DOM 요소를 그리는 함수"다. 예: `renderSummaryPanel(container, props)`
+- 화면은 한 페이지이고, 화면 조각(컴포넌트)은 `frontend/src/components/`의 **React 함수 컴포넌트(JSX)** 로 만든다. Vite로 빌드한다.
+- 각 컴포넌트는 "Props를 받아 JSX를 돌려주는 함수"다. 예: `<SummaryPanel summary={summary} onRetry={reloadSummary} />`
 - 데이터와 상태는 최상위 `App`이 한곳에서 갖고, 하위 컴포넌트에는 Props로 내려 준다. 하위 컴포넌트는 사용자 동작을 콜백(`on...`)으로 `App`에 알린다.
+- 입력 중인 값은 그 폼 컴포넌트의 상태다. `App`이 내려 주는 `resetKey`를 React `key`로 써서 폼을 새로 채운다. 검색어는 다른 곳에서도 비우므로 `App`이 갖는다.
+- 이 문서의 `App` 상태 표에서 `loading`, `success`, `error`를 갖는 값은 `useResource` 훅이 관리한다. `deletingId`, `backingUp`은 v1.0 이후 쓰지 않는다.
 - Props 타입은 TypeScript 문법으로 적었지만 **설명용**이다. 공통 타입(`Transaction`, `TransactionInput`, `MonthlySummary`, `TransactionType`)은 `DATA_MODEL.md` 5절을 따른다.
 
 ## 2. 컴포넌트 트리
@@ -605,6 +607,22 @@ App
 ├─ ConfirmDialog          window.confirm 대체
 └─ Toast                  window.alert 대체, 되돌리기 버튼
 ```
+
+| 파일 (`frontend/src/`) | 담당 |
+|---|---|
+| `App.jsx` | 전체 상태, 데이터 불러오기, 저장·삭제 흐름, 화면 배치 |
+| `components/TabBar.jsx` | TabBar |
+| `components/MonthNavigator.jsx` | MonthNavigator, MonthSelector |
+| `components/SummaryPanel.jsx` | SummaryPanel |
+| `components/CategorySpending.jsx` | CategorySpending, SpendingItem |
+| `components/TransactionDialog.jsx` | TransactionDialog, TransactionForm |
+| `components/TransactionList.jsx` | TransactionList, TransactionFilters, FilterResult, RecurringApplyButton, 날짜 묶음, TransactionItem |
+| `components/CategoryManager.jsx` | CategoryManager, CategoryItem |
+| `components/RecurringManager.jsx` | RecurringManager, RecurringForm, RecurringItem |
+| `components/DataManager.jsx` | DataManager |
+| `components/ConfirmDialog.jsx` | ConfirmDialog |
+| `components/Toast.jsx` | Toast (포털로 열린 창 안이나 `body`에 그림) |
+| `components/AmountInput.jsx`, `StatusMessage.jsx` | 공통 금액 입력칸, 상태 문구 |
 
 - AppHeader: 설정 탭에서는 MonthNavigator와 SummaryPanel을 숨긴다.
 - AppHeader: 스크롤 위치가 80px을 넘으면 요약을 `수입 N원 지출 N원 잔액 N원` 한 줄로 줄이고, 8px 아래로 돌아오면 되돌린다. 스크롤할 길이가 200px 이하인 화면에서는 줄이지 않는다.

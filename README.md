@@ -7,8 +7,8 @@
 - 현재 버전은 **v1.0**입니다.
 - MVP(v0.1 ~ v0.3)부터 v0.11까지 구현되어 있습니다: 거래 등록·조회·수정·삭제, 월별 요약, 사용자 분류, 백업 파일 다운로드, 월 이동 버튼, 분류별 지출, 검색·필터, 분류별 월 예산, 고정 거래.
 - v1.0 개선: 내역·통계·설정 탭, 입력 창, 날짜별 거래 목록, 삭제 되돌리기, CSV 내보내기, 앱 안 백업 복원, 거래 분류 ID 저장.
-- API 테스트 349개와 샘플 테스트 1개가 모두 통과합니다.
-- 화면 동작(`docs/TEST_CASES.md` 2장, 3장)은 브라우저에서 확인합니다.
+- 화면은 React + Vite, 서버는 Python + FastAPI로 만듭니다.
+- API는 pytest로, 화면 동작은 실제 Chrome을 쓰는 점검 스크립트로 테스트합니다. 스크립트에 없는 케이스(`docs/TEST_CASES.md` 2장, 3장)는 브라우저에서 직접 확인합니다.
 
 ## MVP 기능
 
@@ -53,8 +53,8 @@
 |---|---|
 | 백엔드 | Python 3.12, FastAPI, Uvicorn, Pydantic |
 | 데이터베이스 | SQLite (`budget.db`), Python 표준 `sqlite3` 모듈 |
-| 프런트엔드 | HTML + CSS + 순수 JavaScript |
-| 테스트 | pytest, httpx (FastAPI `TestClient`) |
+| 프런트엔드 | React, Vite, JavaScript(JSX), CSS |
+| 테스트 | pytest, httpx (FastAPI `TestClient`), Playwright (화면 점검) |
 
 ## 폴더 구조
 
@@ -65,10 +65,13 @@ budget_book/
 │  ├─ db.py           SQLite 연결, 테이블 생성
 │  ├─ schemas.py      요청 본문 검증
 │  └─ categories.py   고정 분류 목록
-├─ static/
-│  ├─ index.html      화면
-│  ├─ app.js          화면 동작, API 호출
-│  └─ style.css       스타일
+├─ frontend/
+│  ├─ index.html      Vite 시작 파일
+│  ├─ package.json    React, Vite 의존성
+│  ├─ vite.config.js  빌드, 개발 서버 설정
+│  ├─ src/            React 화면 (App.jsx, components/, hooks/, lib/, styles.css)
+│  ├─ e2e/            화면 점검 스크립트
+│  └─ dist/           빌드 결과 (git 제외)
 ├─ tests/
 │  ├─ test_api.py     API 테스트
 │  └─ test_sample.py  샘플 테스트
@@ -93,7 +96,7 @@ budget_book/
 
 ## 설치와 실행 (Windows PowerShell 기준)
 
-Python 3.12가 필요합니다.
+Python 3.12와 Node.js 20.19 이상이 필요합니다.
 
 ```powershell
 # 가상환경 만들기
@@ -101,17 +104,35 @@ python -m venv .venv
 
 # 의존성 설치
 .venv\Scripts\python -m pip install -r requirements.txt
+npm --prefix frontend install
+
+# 화면 빌드 (화면 코드를 바꾸거나 새로 받았을 때마다)
+npm --prefix frontend run build
 
 # 서버 실행 후 브라우저에서 http://127.0.0.1:8000 접속
 .venv\Scripts\python -m uvicorn app.main:app --reload
 
 # 테스트 실행
 .venv\Scripts\python -m pytest tests
+
+# 화면 점검 (빌드 후 실제 Chrome으로 확인, Chrome 설치 필요)
+npm --prefix frontend run e2e
 ```
 
+화면을 고칠 때는 위 서버를 켜 둔 채로 개발 서버를 함께 띄우면 저장 즉시 반영됩니다.
+
+```powershell
+# 브라우저에서 http://127.0.0.1:5173 접속. /api 요청은 FastAPI로 넘어갑니다.
+npm --prefix frontend run dev
+
+# FastAPI가 8000이 아닌 포트에 있으면 주소를 알려 줍니다.
+$env:BUDGET_API_URL = "http://127.0.0.1:8001"; npm --prefix frontend run dev
+```
+
+- 빌드하지 않고 서버를 켜면 `/`에서 빌드 명령을 안내하는 오류가 나옵니다. API는 그대로 동작합니다.
 - 처음 실행하면 프로젝트 폴더에 `budget.db`가 자동으로 만들어집니다.
 - API 문서는 http://127.0.0.1:8000/docs 에서 볼 수 있습니다. 에러 응답은 이 화면의 예시와 달리 `docs/API_SPEC.md`의 `{ "error": { "code", "message" } }` 형식을 따릅니다.
-- 테스트는 임시 DB 파일을 사용하므로 `budget.db`를 건드리지 않습니다.
+- 테스트와 화면 점검은 임시 DB 파일을 사용하므로 `budget.db`를 건드리지 않습니다.
 - 로그인 기능이 없으므로 서버를 외부에 공개하지 마세요. 기본 설정(`127.0.0.1`)은 내 컴퓨터에서만 접속할 수 있습니다.
 
 ## 데이터 백업

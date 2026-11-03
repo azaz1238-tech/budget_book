@@ -16,7 +16,7 @@
 | 구분 | 실행 방식 |
 |---|---|
 | API | pytest + FastAPI `TestClient`. 테스트마다 빈 임시 DB 파일(`BUDGET_DB_PATH`)을 사용하고 실제 `budget.db`는 건드리지 않는다. |
-| 컴포넌트 | 서버를 실행한 뒤 브라우저에서 직접 확인한다. (현재 스택에 JavaScript 테스트 도구가 없음) |
+| 컴포넌트 | `npm --prefix frontend run e2e`로 실제 Chrome에서 자동 점검한다. 임시 DB와 빈 포트를 쓰므로 실제 `budget.db`와 켜 둔 서버를 건드리지 않는다. 자동 점검에 없는 케이스는 브라우저에서 직접 확인한다. |
 | 릴리스 점검 | 3절의 순서대로 브라우저에서 직접 확인한다. 실제 `budget.db` 대신 임시 DB를 쓴다. |
 
 - **DB 오류 상황**: 테스트에서 DB 연결 함수가 `sqlite3.OperationalError`를 일으키도록 바꿔서 만든다.
@@ -44,7 +44,9 @@
 
 | ID | 대상 | 상황 | 기대 결과 |
 |---|---|---|---|
-| API-COM-N01 | `GET /` | 화면 주소 요청 | 200, `index.html` 반환 |
+| API-COM-N01 | `GET /` | 빌드한 화면이 있을 때 화면 주소 요청 | 200, `frontend/dist/index.html` 반환 |
+| API-COM-N05 | `GET /assets/*` | 빌드한 화면의 JS 파일 요청 | 200, 파일 내용 반환 |
+| API-COM-E03 | `GET /` | 화면을 빌드하지 않음 | 503 `FRONTEND_NOT_BUILT`, 빌드 명령 안내. API는 정상 동작 |
 | API-COM-N02 | DB 초기화 | DB 파일이 없는 상태로 앱 시작 | `transactions`·`categories` 테이블과 `idx_transactions_date` 인덱스가 자동 생성되고, `categories`에 기본 분류 10개가 들어감 |
 | API-COM-N03 | 데이터 유지 | T1 등록 후, 같은 DB 파일로 앱을 새로 만들어 목록 조회 | T1이 그대로 조회됨 (서버 재실행 후에도 유지) |
 | API-COM-N04 | 응답 형식 | 본문이 있는 모든 성공 응답 | `Content-Type`이 `application/json` |

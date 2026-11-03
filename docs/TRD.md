@@ -9,7 +9,7 @@
 |---|---|
 | 데이터 저장 위치 | 서버 컴퓨터의 SQLite `budget.db` |
 | 분류 편집 | MVP에서는 고정 목록. v0.4에서 사용자 분류 추가·이름 수정·삭제 (기본 분류는 고정, 11절) |
-| 기술 스택 | Python + FastAPI (백엔드), JavaScript (프런트엔드), SQLite (DB) |
+| 기술 스택 | Python + FastAPI (백엔드), JavaScript + React + Vite (프런트엔드), SQLite (DB) |
 | 백업 | v0.5에서 브라우저 다운로드 방식(12절). v1.0부터 앱 안 복원 제공 (15.4절) |
 | 통계 표시 | v0.8 분류별 지출은 차트 라이브러리 없이 CSS 막대로 그림 (14.2절) |
 | 고정 거래 | v0.11에서 수동 불러오기 버튼 방식. 자동 스케줄러 없음 (14.5절) |
@@ -18,12 +18,13 @@
 
 ```
 [브라우저]                     [서버 컴퓨터]
- index.html  ──HTTP(JSON)──▶  Uvicorn ─▶ FastAPI ─▶ sqlite3 ─▶ budget.db
- app.js      ◀──────────────  (응답 JSON)
+ React 화면  ──HTTP(JSON)──▶  Uvicorn ─▶ FastAPI ─▶ sqlite3 ─▶ budget.db
+             ◀──────────────  (응답 JSON)
 ```
 
 - 한 대의 컴퓨터에서 FastAPI 서버를 실행하고, 브라우저로 접속해 사용한다.
-- 화면(HTML/CSS/JS)도 같은 FastAPI 서버가 제공한다. 별도의 프론트엔드 서버는 없다.
+- 평소에는 `npm run build`로 만든 `frontend/dist`를 FastAPI 서버가 함께 제공하므로 서버 하나만 실행한다.
+- 화면을 개발할 때만 Vite 개발 서버(`npm run dev`, 5173번 포트)를 함께 띄운다. Vite가 `/api` 요청을 FastAPI로 넘긴다.
 - 거래 데이터의 원본은 `budget.db`에만 있다. 브라우저 저장소(localStorage 등)에는 거래 데이터를 저장하지 않는다.
 
 ## 2. 기술 스택과 선택 이유
@@ -36,16 +37,19 @@
 | 입력 검증 | Pydantic | "금액은 1 이상의 정수" 같은 규칙을 클래스로 적어 두면 잘못된 요청을 자동으로 거절해 준다(FastAPI에 포함). |
 | 데이터베이스 | SQLite | 설치나 별도 DB 서버 없이 `budget.db` 파일 하나로 동작해서, 혼자 쓰는 앱에 가장 간단하다. |
 | DB 접근 | Python 표준 `sqlite3` 모듈 | Python에 기본 포함되어 추가 설치가 필요 없고, 테이블이 몇 개(현재 5개)뿐이고 쿼리가 단순해 ORM 없이 SQL로 충분하다. |
-| 화면 | HTML + CSS + 순수 JavaScript | 빌드 도구나 프레임워크 없이 브라우저가 바로 실행할 수 있어서, 화면 하나짜리 앱에 배울 것이 가장 적다. |
+| 화면 | React + JavaScript(JSX) + CSS | 상태가 바뀌면 화면을 자동으로 다시 그려 주므로, 탭·입력 창·설정이 늘어난 화면에서 DOM을 직접 고치는 코드가 사라진다. |
+| 화면 빌드·개발 서버 | Vite | 설정이 거의 없고, 개발 중에는 저장 즉시 화면에 반영되며, 배포용 파일을 `frontend/dist`로 만들어 준다. |
 | 화면 ↔ 서버 통신 | 브라우저 `fetch` API | 브라우저에 기본 내장된 기능으로, 버튼을 누르면 페이지 이동 없이 서버에 JSON을 보내고 받을 수 있다. |
-| 정적 파일 제공 | FastAPI `StaticFiles` | HTML/JS/CSS 파일을 같은 서버에서 내려 주므로 서버를 하나만 실행하면 된다. |
+| 정적 파일 제공 | FastAPI `FileResponse`, `StaticFiles` | 빌드한 화면을 같은 서버에서 내려 주므로 평소에는 서버를 하나만 실행하면 된다. |
 | 테스트 | pytest + FastAPI `TestClient`(httpx) | 서버를 띄우지 않고도 API를 호출해 결과를 확인할 수 있는 Python 표준 테스트 도구다. (`requirements.txt`에 포함) |
+| 화면 점검 | Playwright(`playwright-core`) + 설치된 Chrome | 실제 브라우저로 화면 동작을 확인한다. 브라우저를 따로 내려받지 않고 설치된 Chrome을 쓴다. (개발 의존성) |
 
 ### 사용하지 않는 것과 이유
 
 - **SQLAlchemy 등 ORM**: 테이블 5개, 단순한 쿼리뿐이라 배울 양에 비해 이득이 적다.
-- **React/Vue 등 프론트엔드 프레임워크**: 화면이 하나이고 빌드 과정이 추가되어 MVP에 과하다.
-- **템플릿 엔진(Jinja2)**: 화면은 정적 HTML로 두고 데이터는 JS가 API로 받아 그리므로 필요 없다.
+- **TypeScript**: 혼자 쓰는 작은 앱이라 JavaScript로 충분하다. 문서의 타입 표기는 설명용이다.
+- **상태 관리·라우터·UI 라이브러리**: 화면이 한 페이지이고 상태는 `App`에 모여 있어 React 기본 기능으로 충분하다. 입력 창과 확인 창도 HTML `<dialog>`를 그대로 쓴다.
+- **템플릿 엔진(Jinja2)**: 화면은 React가 그리고 데이터는 API로 받으므로 필요 없다.
 
 ## 3. 폴더 구조
 
@@ -56,10 +60,19 @@ budget_book/
 │  ├─ db.py            # SQLite 연결, 테이블 생성(init_db), 분류 존재 확인 함수
 │  ├─ schemas.py       # Pydantic 요청 본문 모델과 검증기
 │  └─ categories.py    # 기본 분류 목록, 유형 이름, 분류 이름 최대 길이
-├─ static/
-│  ├─ index.html       # 화면 구조 (카드 자리만 두고 내용은 app.js가 그림)
-│  ├─ app.js           # 컴포넌트 함수, 상태, fetch 호출
-│  └─ style.css        # 스타일 (수입 파란색, 지출 빨간색)
+├─ frontend/
+│  ├─ index.html       # Vite 시작 파일 (#root 자리만 둠)
+│  ├─ package.json     # React, Vite 의존성과 npm 명령
+│  ├─ vite.config.js   # 빌드 위치, 개발 서버의 /api 전달
+│  ├─ src/
+│  │  ├─ main.jsx      # React 시작점
+│  │  ├─ App.jsx       # 전체 상태, API 호출 흐름, 화면 배치
+│  │  ├─ styles.css    # 스타일 (수입 파란색, 지출 빨간색)
+│  │  ├─ components/   # 화면 컴포넌트 (COMPONENT_SPEC 6.1절)
+│  │  ├─ hooks/        # useResource(데이터 불러오기), useConfirm, useCompactHeader
+│  │  └─ lib/          # api.js(fetch 호출), format.js(표시·계산), validation.js(입력 검사)
+│  ├─ e2e/             # 화면 점검: run.mjs(실행기), mobile.cjs(휴대폰 화면), regress.cjs(전체 기능)
+│  └─ dist/            # npm run build 결과 (버전 관리 제외)
 ├─ tests/
 │  ├─ test_api.py      # API 테스트 (TEST_CASES 1장)
 │  └─ test_sample.py   # 샘플 테스트 (1 + 1 = 2)
@@ -185,7 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 
 ## 6. 화면 설계
 
-- 화면은 한 페이지(`index.html`)로 구성한다.
+- 화면은 React 한 페이지로 구성한다. (`frontend/index.html`에서 시작)
   - **월 선택**: `<input type="month">`, 기본값은 오늘이 속한 달
   - **월별 요약**: 수입 합계(파란색), 지출 합계(빨간색), 잔액
   - **입력 폼**: 유형(라디오), 거래일(`<input type="date">`), 금액, 분류(선택한 유형에 맞게 목록 변경), 메모, 저장 버튼
@@ -205,10 +218,10 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 | 단계 | 위치 | 일어나는 일 |
 |---|---|---|
 | 1 | 브라우저 (HTML) | 사용자가 저장 버튼을 누르면 폼의 `submit` 이벤트가 발생한다. |
-| 2 | 브라우저 (`app.js`) | 이벤트 처리 함수가 `event.preventDefault()`로 페이지 새로고침을 막는다. |
-| 3 | 브라우저 (`app.js`) | 입력값을 읽어 빈 필수값, 1 미만 금액 같은 간단한 실수를 먼저 확인한다. 문제가 있으면 여기서 오류를 보여 주고 멈춘다. |
-| 4 | 브라우저 (`app.js`) | 입력값을 JSON으로 만든다. 금액은 숫자로 변환하고, 빈 메모는 `null`로 보낸다. |
-| 5 | 브라우저 (`app.js`) | 중복 클릭을 막기 위해 저장 버튼을 잠시 비활성화한다. |
+| 2 | 브라우저 (React) | 이벤트 처리 함수가 `event.preventDefault()`로 페이지 새로고침을 막는다. |
+| 3 | 브라우저 (React) | 입력값을 읽어 빈 필수값, 1 미만 금액 같은 간단한 실수를 먼저 확인한다. 문제가 있으면 여기서 오류를 보여 주고 멈춘다. |
+| 4 | 브라우저 (React) | 입력값을 JSON으로 만든다. 금액은 숫자로 변환하고, 빈 메모는 `null`로 보낸다. |
+| 5 | 브라우저 (React) | 중복 클릭을 막기 위해 저장 버튼을 잠시 비활성화한다. |
 | 6 | 브라우저 → 서버 | `fetch('/api/transactions', { method: 'POST', body: JSON })`로 요청을 보낸다. |
 | 7 | 서버 (Uvicorn) | Uvicorn이 HTTP 요청을 받아 FastAPI 앱에 넘긴다. |
 | 8 | 서버 (FastAPI) | 주소(`POST /api/transactions`)를 보고 등록 함수를 찾는다. |
@@ -218,8 +231,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 | 12 | 서버 (SQLite) | SQLite가 `CHECK` 제약을 한 번 더 확인하고 행을 추가한 뒤, 커밋하면 파일에 저장된다. 이 시점부터 서버를 재시작해도 데이터가 남는다. |
 | 13 | 서버 (`main.py`) | 새로 생긴 `id`로 저장된 행을 다시 읽는다. |
 | 14 | 서버 → 브라우저 | 저장된 거래를 JSON으로 만들어 `201 Created`로 응답한다. |
-| 15 | 브라우저 (`app.js`) | 응답이 성공이면 폼을 비우고, 실패(422/500/연결 실패)면 오류 메시지를 표시한다. 어느 경우든 저장 버튼을 다시 활성화한다. |
-| 16 | 브라우저 (`app.js`) | 성공한 경우 `GET /api/transactions`, `GET /api/summary`를 다시 호출해 목록과 월별 요약을 새로 그린다. (v0.8 이후: 분류별 지출, 검색 결과 합계, 고정 거래 상태도 함께) |
+| 15 | 브라우저 (React) | 응답이 성공이면 폼을 비우고, 실패(422/500/연결 실패)면 오류 메시지를 표시한다. 어느 경우든 저장 버튼을 다시 활성화한다. |
+| 16 | 브라우저 (React) | 성공한 경우 `GET /api/transactions`, `GET /api/summary`를 다시 호출해 목록과 월별 요약을 새로 그린다. (v0.8 이후: 분류별 지출, 검색 결과 합계, 고정 거래 상태도 함께) |
 
 ### 7.2 흐름 그림
 
@@ -227,7 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 [저장 버튼 클릭]
       │
       ▼
- app.js: 기본 동작 막기 → 간단 검사 ──실패──▶ 화면에 오류 표시 (끝)
+ React: 기본 동작 막기 → 간단 검사 ──실패──▶ 화면에 오류 표시 (끝)
       │ 통과
       ▼
  JSON 만들기 → fetch POST /api/transactions
@@ -242,7 +255,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
  budget.db 파일에 저장 완료 → 201 응답(저장된 거래 JSON)
       │
       ▼
- app.js: 폼 초기화 → 목록·요약 다시 조회 → 화면 갱신
+ React: 폼 초기화 → 목록·요약 다시 조회 → 화면 갱신
 ```
 
 ### 7.3 수정·삭제 흐름의 차이
@@ -272,14 +285,26 @@ CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date);
 ```powershell
 # 의존성 설치
 .venv\Scripts\python -m pip install -r requirements.txt
+npm --prefix frontend install
+
+# 화면 빌드 (화면 코드를 바꿨을 때마다)
+npm --prefix frontend run build
 
 # 서버 실행 후 브라우저에서 http://127.0.0.1:8000 접속
 .venv\Scripts\python -m uvicorn app.main:app --reload
 
+# 화면 개발: 위 서버를 켜 둔 채로 실행하고 http://127.0.0.1:5173 접속
+npm --prefix frontend run dev
+
 # 테스트
 .venv\Scripts\python -m pytest tests
+
+# 화면 점검 (빌드 후 실제 Chrome으로 확인, Chrome 설치 필요)
+npm --prefix frontend run e2e
 ```
 
+- Node.js 20.19 이상이 필요하다. FastAPI가 8000이 아닌 포트에 있으면 개발 서버 실행 전에 환경 변수 `BUDGET_API_URL`로 주소를 알려 준다.
+- 빌드하지 않고 서버를 켜면 `GET /`가 503 `FRONTEND_NOT_BUILT`를 돌려준다. API는 그대로 동작한다.
 - 서버는 기본적으로 `127.0.0.1`(내 컴퓨터)에서만 접속 가능하게 실행한다. 로그인이 없으므로 외부에 공개하지 않는다.
 - 백업은 화면 상단의 `백업 다운로드` 버튼(v0.5, 12절)으로 받는다. 수동 복원 방법은 README에 적는다.
 
@@ -338,7 +363,7 @@ CREATE TABLE IF NOT EXISTS categories (
 | PUT | `/api/categories/{id}` | 사용자 분류 이름 수정 (`name`) |
 | DELETE | `/api/categories/{id}` | 사용자 분류 삭제 |
 
-- `GET /api/categories` 응답 모양이 바뀌므로 화면(`app.js`)과 기존 테스트(`API-CAT-N01`)도 함께 바꾼다.
+- `GET /api/categories` 응답 모양이 바뀌므로 화면(`frontend/src`)과 기존 테스트(`API-CAT-N01`)도 함께 바꾼다.
 
 ### 11.5 화면 변경 (상세는 COMPONENT_SPEC에서 정한다)
 
@@ -382,9 +407,9 @@ CREATE TABLE IF NOT EXISTS categories (
 ### 12.2 처리 흐름
 
 1. 사용자가 상단 제목 옆 `백업 다운로드` 버튼을 누른다.
-2. `app.js`가 버튼을 비활성화하고 `GET /api/backup`을 호출한다.
+2. 화면이 버튼을 비활성화하고 `GET /api/backup`을 호출한다.
 3. 서버가 `budget.db`에 연결해 메모리 DB로 백업하고, 바이트로 꺼내 `application/vnd.sqlite3`으로 응답한다.
-4. `app.js`가 응답의 `Content-Disposition`에서 파일 이름을 읽고 `Blob`으로 다운로드를 시작한다.
+4. 화면이 응답의 `Content-Disposition`에서 파일 이름을 읽고 `Blob`으로 다운로드를 시작한다.
 5. 실패하면(서버 에러, 연결 실패) 에러 메시지를 `alert`로 보여 준다. 어느 경우든 버튼을 다시 활성화한다.
 
 ### 12.3 데이터와 API 변경
@@ -550,13 +575,22 @@ SPEC FR-16 ~ FR-20의 구현 방법을 정한다. 이 절이 앞 절과 다르�
 
 ### 15.5 화면
 
+- 화면은 React 컴포넌트로 만든다. 입력값은 각 폼의 상태로 관리하고, 폼에 `key`를 주어 새로 채운다.
 - 입력 창과 확인 창은 HTML `<dialog>`를 쓴다. 포커스 가두기, Esc 닫기, 배경 처리를 브라우저가 맡으므로 라이브러리가 필요 없다.
-- 탭은 페이지 이동 없이 영역을 숨기고 보여 준다. 선택한 탭은 저장하지 않는다.
+- 탭은 페이지 이동 없이 영역을 숨기고 보여 준다. 숨겨도 컴포넌트를 없애지 않아 입력 중인 값이 유지된다. 선택한 탭은 저장하지 않는다.
 - 유형 토글과 분류 칩은 겉모양만 바꾼 라디오 버튼이다. 키보드 조작과 화면 낭독기 동작이 그대로 유지된다.
-- 모달 `<dialog>`가 열리면 바깥 요소는 눌리지 않는다. 그래서 알림 영역을 열려 있는 창 안으로 옮기고, 창이 닫히면 `body`로 되돌린다.
+- 모달 `<dialog>`가 열리면 바깥 요소는 눌리지 않는다. 그래서 React 포털로 알림 영역을 열려 있는 창 안에 그리고, 창이 닫히면 `body`에 그린다.
 - 헤더는 문서 흐름 안에 있어 줄어들면 스크롤 위치가 함께 움직인다. 줄이는 위치와 되돌리는 위치를 다르게 두고, 스크롤할 길이가 충분할 때만 줄여 헤더가 깜빡이지 않게 한다.
 - Esc는 `keydown`에서 먼저 처리한다. Chrome은 사용자 입력 없이 연달아 들어온 닫기 요청에는 `cancel` 이벤트를 보내지 않기 때문이다. Esc 키가 없는 기기의 닫기 요청은 `cancel`에서 처리한다.
 - 상세는 `docs/COMPONENT_SPEC.md` 6절을 따른다.
+
+- 서버 응답은 `useResource` 훅으로 불러온다. 조건이 바뀌면 이전 요청의 결과를 버려 늦은 응답이 최신 화면을 덮어쓰지 않는다.
+
+### 15.5.1 화면 제공 (React + Vite)
+
+- `GET /`는 `frontend/dist/index.html`을, `/assets/*`는 빌드한 JS·CSS를 돌려준다.
+- `/`에 통째로 마운트하지 않는다. 그러면 `/api` 경로의 지원하지 않는 메서드 요청까지 화면 파일 쪽으로 넘어가 405 대신 404가 된다.
+- `frontend/dist`는 git에 넣지 않는다. 빌드하지 않았으면 `GET /`가 503 `FRONTEND_NOT_BUILT`로 빌드 명령을 안내한다. API 테스트는 빌드 없이 돌아가도록 `BUDGET_FRONTEND_DIST`로 임시 폴더를 지정한다.
 
 ### 15.6 v1.0에 넣지 않은 것
 
