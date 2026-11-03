@@ -18,6 +18,9 @@ const QUICK_AMOUNTS = [
 const UNDO_DURATION_MS = 5000;
 const TOAST_DURATION_MS = 4000;
 const WARN_RATIO = 0.8;
+const HEADER_COMPACT_AT = 80;
+const HEADER_EXPAND_AT = 8;
+const HEADER_MIN_SCROLL_ROOM = 200;
 
 // ---------------------------------------------------------------------------
 // 공통 도구
@@ -509,6 +512,7 @@ function buildTransactionForm({ editing, defaults, resetKey }) {
   ]);
   form.dataset.resetKey = String(resetKey);
   form.querySelector(".category-field").dataset.pending = values.category;
+  form.initialValues = readTransactionDraft(form);
 
   for (const radio of form.querySelectorAll('input[name="type"]')) {
     radio.addEventListener("change", () => {
@@ -599,6 +603,22 @@ function readTransactionInput(form) {
   };
 }
 
+/** 바꾼 값이 있는지 비교할 입력값. 분류 칩은 늦게 그려질 수 있어 선택값(pending)을 쓴다. */
+function readTransactionDraft(form) {
+  return JSON.stringify([
+    form.elements.type.value,
+    form.elements.date.value,
+    form.elements.amount.value.replace(/,/g, "").trim(),
+    form.querySelector(".category-field").dataset.pending || "",
+    form.elements.memo.value.trim(),
+  ]);
+}
+
+function isTransactionFormDirty() {
+  const form = dom.form.querySelector("form");
+  return Boolean(form) && readTransactionDraft(form) !== form.initialValues;
+}
+
 /** 클라이언트 검사. 문구는 서버 message와 같게 맞춘다. */
 function validateTransactionInput(input) {
   if (!input.date) return "거래일을 입력해 주세요.";
@@ -616,7 +636,7 @@ function hasFilters(filters) {
   return Boolean(filters.type || filters.category || filters.q);
 }
 
-function TransactionFilters({ categories, filters, qDraft, onChange, onInvalid }) {
+function TransactionFilters({ categories, filters, filtersOpen, qDraft, onChange, onInvalid }) {
   const typeSelect = el("select", { className: "filter-type", "aria-label": "유형 필터" }, [
     el("option", { value: "", text: "전체" }),
     el("option", { value: "expense", text: "지출" }),
@@ -674,7 +694,8 @@ function TransactionFilters({ categories, filters, qDraft, onChange, onInvalid }
     },
   });
 
-  return el("div", { className: "list-filters" }, [
+  // 접혀 있어도 입력 중인 검색어를 유지하도록 숨기기만 한다.
+  return el("div", { className: "list-filters", hidden: !filtersOpen }, [
     el("label", { className: "filter-field" }, [el("span", { text: "유형" }), typeSelect]),
     el("label", { className: "filter-field" }, [el("span", { text: "분류" }), categorySelect]),
     searchForm,
@@ -702,12 +723,12 @@ function FilterResult({ filters, transactions, filterSummary }) {
   });
 }
 
+/** 고정 거래가 없거나 확인 중이면 목록 위 자리를 차지하지 않도록 null을 돌려준다. */
 function RecurringApplyButton({ recurring, applying, onApply }) {
+  if (recurring.status === "loading" || (recurring.status === "success" && recurring.data.length === 0)) return null;
   let text;
   let pending = 0;
-  if (recurring.status === "loading") text = "고정 거래 확인 중...";
-  else if (recurring.status === "error") text = "고정 거래를 확인하지 못했습니다";
-  else if (recurring.data.length === 0) text = "등록된 고정 거래 없음";
+  if (recurring.status === "error") text = "고정 거래를 확인하지 못했습니다";
   else {
     pending = recurring.data.filter((item) => !item.applied).length;
     text = pending ? `이번 달 고정 거래 불러오기 (${pending}건)` : "고정 거래를 모두 불러왔습니다";
@@ -777,13 +798,24 @@ function renderTransactionList(container, props) {
   } else {
     body = el("div", { className: "date-groups" }, groupByDate(transactions.data).map((group) => DateGroup({ ...group, onEdit })));
   }
+  const applyButton = RecurringApplyButton({ recurring: props.recurring, applying: props.applying, onApply: props.onApplyRecurring });
+  const toggleText = props.filtersOpen ? "검색 닫기" : hasFilters(filters) ? "검색 (적용 중)" : "검색";
   container.replaceChildren(
     ...[
-      el("h2", { text: "거래 내역" }),
+      el("div", { className: "list-head" }, [
+        el("h2", { text: "거래 내역" }),
+        el("button", {
+          type: "button",
+          className: "button-secondary filter-toggle",
+          text: toggleText,
+          "aria-expanded": props.filtersOpen ? "true" : "false",
+          onClick: props.onToggleFilters,
+        }),
+      ]),
       TransactionFilters({ ...props, qDraft, onChange: props.onFiltersChange, onInvalid: props.onFilterInvalid }),
       props.filterError ? el("p", { className: "form-error filter-error", role: "alert", text: props.filterError.message }) : null,
       FilterResult(props),
-      el("div", { className: "recurring-apply-row" }, [RecurringApplyButton({ recurring: props.recurring, applying: props.applying, onApply: props.onApplyRecurring })]),
+      applyButton ? el("div", { className: "recurring-apply-row" }, [applyButton]) : null,
       body,
     ].filter(Boolean),
   );
@@ -1125,6 +1157,8 @@ function RecurringItem({ item, busy, isEditing, onEdit, onDelete }) {
 // ---------------------------------------------------------------------------
 
 const dom = {
+  header: document.getElementById("app-header"),
+  monthControls: document.getElementById("month-controls"),
   tabs: document.getElementById("tab-bar"),
   month: document.getElementById("month-selector"),
   navigator: document.getElementById("month-navigator"),
@@ -1166,6 +1200,7 @@ const state = {
   categoryResetKey: 0,
   dataBusy: null,
   filters: { ...EMPTY_FILTERS },
+  filtersOpen: false,
   filterError: null,
   filterSummary: null,
   categorySpending: { status: "loading" },
@@ -1194,7 +1229,20 @@ const latestRequest = {
 function renderTabs() {
   renderTabBar(dom.tabs, { tab: state.tab, onChange: handleTabChange });
   for (const [name, panel] of Object.entries(dom.panels)) panel.hidden = name !== state.tab;
-  dom.add.hidden = state.tab === "settings";
+  const isSettings = state.tab === "settings";
+  dom.add.hidden = isSettings;
+  dom.monthControls.hidden = isSettings;
+  dom.summary.hidden = isSettings;
+}
+
+/** 스크롤하면 요약을 한 줄로 줄인다. 줄이는 위치와 되돌리는 위치를 달리해 깜빡이지 않게 한다 (TRD 15.5절). */
+function updateHeaderCompact() {
+  const y = window.scrollY;
+  if (dom.header.classList.contains("is-compact")) {
+    if (y < HEADER_EXPAND_AT) dom.header.classList.remove("is-compact");
+  } else if (y > HEADER_COMPACT_AT && document.documentElement.scrollHeight - window.innerHeight > HEADER_MIN_SCROLL_ROOM) {
+    dom.header.classList.add("is-compact");
+  }
 }
 
 function renderData() {
@@ -1242,6 +1290,7 @@ function renderForm() {
   });
   if (state.formOpen && !dom.formDialog.open) dom.formDialog.showModal();
   if (!state.formOpen && dom.formDialog.open) dom.formDialog.close();
+  placeToast();
 }
 
 function renderCategories() {
@@ -1296,8 +1345,10 @@ function renderList() {
     },
     categories: state.categories,
     filters: state.filters,
+    filtersOpen: state.filtersOpen,
     filterError: state.filterError,
     filterSummary: state.filterSummary,
+    onToggleFilters: handleToggleFilters,
     onFiltersChange: handleFiltersChange,
     onFilterInvalid: handleFilterInvalid,
     recurring: state.recurring,
@@ -1398,6 +1449,13 @@ function handleFilterInvalid(message) {
   renderList();
 }
 
+function handleToggleFilters() {
+  state.filtersOpen = !state.filtersOpen;
+  renderList();
+  // 목록을 다시 그려도 키보드 포커스가 버튼에 남게 한다.
+  dom.list.querySelector(".filter-toggle").focus();
+}
+
 function handleTabChange(tab) {
   state.tab = tab;
   renderTabs();
@@ -1473,6 +1531,7 @@ async function handleSubmit(input) {
     resetForm();
     if (editing) {
       state.formOpen = false;
+      showToast("수정했습니다.");
     } else {
       // 연속 입력: 창을 유지하고 유형과 거래일을 이어 간다.
       state.formDefaults = { type: input.type, date: input.date };
@@ -1551,6 +1610,7 @@ function confirmDialog({ message, confirmText = "확인", danger = false }) {
       settled = true;
       dialog.removeEventListener("close", onClose);
       if (dialog.open) dialog.close();
+      placeToast();
       resolve(result);
     };
     const onClose = () => finish(false);
@@ -1563,7 +1623,14 @@ function confirmDialog({ message, confirmText = "확인", danger = false }) {
       ]),
     );
     dialog.showModal();
+    placeToast();
   });
+}
+
+/** 모달 창이 열리면 바깥 요소를 누를 수 없으므로 알림 영역을 열린 창 안으로 옮긴다. */
+function placeToast() {
+  const host = dom.confirm.open ? dom.confirm : dom.formDialog.open ? dom.formDialog : document.body;
+  if (dom.toast.parentElement !== host) host.append(dom.toast);
 }
 
 let toastTimer = null;
@@ -1574,18 +1641,18 @@ function hideToast() {
 }
 
 /** 화면 아래 알림. 한 번에 하나만 보이고, 새 알림이 오면 바뀐다. */
-function showToast(message, { action = null, duration = TOAST_DURATION_MS, kind = "info" } = {}) {
+function showToast(message, { action = null, duration = TOAST_DURATION_MS, kind = "info", sticky = kind === "error" } = {}) {
   hideToast();
   const buttons = [];
   if (action) {
     buttons.push(el("button", { type: "button", className: "toast-action", text: action.label, onClick: () => { hideToast(); action.onClick(); } }));
   }
-  // 에러는 읽을 시간이 필요하므로 닫기를 누를 때까지 남긴다.
-  if (kind === "error") buttons.push(el("button", { type: "button", className: "toast-action", text: "닫기", onClick: hideToast }));
+  // 에러와 복원 결과는 읽을 시간이 필요하므로 닫기를 누를 때까지 남긴다.
+  if (sticky) buttons.push(el("button", { type: "button", className: "toast-action", text: "닫기", onClick: hideToast }));
   dom.toast.replaceChildren(
     el("div", { className: `toast toast-${kind}`, role: kind === "error" ? "alert" : "status" }, [el("span", { text: message }), ...buttons]),
   );
-  if (kind !== "error") toastTimer = setTimeout(hideToast, duration);
+  if (!sticky) toastTimer = setTimeout(hideToast, duration);
 }
 
 function showErrorToast(error) {
@@ -1848,21 +1915,64 @@ async function handleRestoreFile(file) {
   state.dataBusy = "restore";
   renderData();
   try {
-    await api.restoreBackup(file);
-    // 화면의 모든 상태가 옛 데이터이므로 새로 불러온다.
-    window.location.reload();
+    const { transactions, safety_copy: safetyCopy } = await api.restoreBackup(file);
+    reloadAfterRestore();
+    showToast(`복원했습니다. 거래 ${transactions}건. 복원 전 데이터 사본: ${safetyCopy}`, { sticky: true });
   } catch (error) {
+    showErrorToast(error);
+  } finally {
     state.dataBusy = null;
     renderData();
-    showErrorToast(error);
   }
 }
 
+/** 화면의 모든 상태가 옛 데이터이므로 비우고 새로 불러온다. 탭과 선택한 달은 유지한다. */
+function reloadAfterRestore() {
+  const qInput = dom.list.querySelector(".filter-q");
+  if (qInput) qInput.value = "";
+  state.filters = { ...EMPTY_FILTERS };
+  state.filtersOpen = false;
+  state.filterError = null;
+  state.renamingCategoryId = null;
+  state.budgetEditingId = null;
+  state.categoryError = null;
+  state.categoryResetKey += 1;
+  state.recurringEditing = null;
+  state.recurringFormOpen = false;
+  state.recurringError = null;
+  state.recurringResetKey += 1;
+  loadCategories();
+  loadBudgets();
+  loadMonth();
+}
+
+/** 바꾼 값이 있으면 버릴지 묻는다. 확인 창이 열려 있는 동안 이 창은 눌리지 않아 겹쳐 뜨지 않는다. */
+async function confirmDiscardForm() {
+  const confirmed = await confirmDialog({ message: "입력한 내용을 버리고 닫을까요?", confirmText: "버리기", danger: true });
+  if (confirmed) closeForm();
+}
+
+/** Esc와 기기의 닫기 요청. 막았으면 true를 돌려준다. */
+function interceptFormClose() {
+  if (state.submitting) return true;
+  if (!isTransactionFormDirty()) return false;
+  confirmDiscardForm();
+  return true;
+}
+
 dom.add.addEventListener("click", openNewForm);
+// Chrome은 연달아 들어온 닫기 요청에 cancel을 보내지 않으므로 Esc는 keydown에서 먼저 막는다 (TRD 15.5절).
+dom.formDialog.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && interceptFormClose()) event.preventDefault();
+});
+dom.formDialog.addEventListener("cancel", (event) => {
+  if (interceptFormClose()) event.preventDefault();
+});
 // Esc로 닫은 경우에도 폼 상태를 정리한다.
 dom.formDialog.addEventListener("close", () => {
   if (state.formOpen) closeForm();
 });
+window.addEventListener("scroll", updateHeaderCompact, { passive: true });
 
 renderTabs();
 renderData();

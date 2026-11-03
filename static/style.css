@@ -880,15 +880,17 @@ button:disabled {
    v1.0 화면
    -------------------------------------------------------------------------- */
 
-/* 헤더 안 요약은 세 칸을 한 줄로 작게 보여 준다. */
+/* 헤더 안 요약은 세 칸을 작게 보여 준다. 금액은 끊지 않고, 들어가지 않으면 칸을 다음 줄로 내린다. */
 .app-header .summary {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .app-header .summary > div {
-  display: block;
-  padding: 6px 10px;
+  flex: 1 1 0;
+  min-width: max-content;
+  padding: 6px 8px;
 }
 
 .app-header .summary dt {
@@ -897,7 +899,58 @@ button:disabled {
 
 .app-header .summary dd {
   font-size: 1rem;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+/* 스크롤하면 요약을 한 줄로 줄인다. */
+.app-header.is-compact .app-header-inner {
+  gap: 6px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.app-header.is-compact .summary {
+  justify-content: space-between;
+  gap: 0 6px;
+}
+
+.app-header.is-compact .summary > div {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 3px;
+  padding: 0;
+  background: transparent;
+}
+
+.app-header.is-compact .summary dt {
+  font-size: 0.68rem;
+}
+
+.app-header.is-compact .summary dd {
+  margin: 0;
+  font-size: 0.74rem;
+  letter-spacing: -0.02em;
+}
+
+/* 거래 내역 제목과 검색 버튼 */
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.list-head h2 {
+  margin: 0;
+}
+
+.filter-toggle {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 0.85rem;
 }
 
 #summary-panel > h2 {
@@ -1174,6 +1227,12 @@ button:disabled {
   z-index: 20;
   width: min(480px, calc(100vw - 32px));
   transform: translateX(-50%);
+}
+
+/* 창이 열려 있으면 입력칸과 버튼을 가리지 않도록 위쪽에 보여 준다. */
+dialog .toast-region {
+  top: 12px;
+  bottom: auto;
 }
 
 .toast {

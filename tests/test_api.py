@@ -1979,3 +1979,33 @@ def test_api_mig_e01_failure_keeps_original(db_path):
             pass
     assert "category" in table_columns(db_path, "transactions")
     assert table_rows(db_path, "transactions")[0]["category"] == long_name
+
+
+def test_api_mig_e02_invalid_names_are_reported_before_changes(db_path):
+    long_name = "가" * 21
+    make_legacy_db(db_path, [
+        ("2026-10-30", "expense", 1000, long_name, None),
+        ("2026-10-30", "income", 2000, "   ", None),
+        ("2026-10-30", "expense", 3000, "식비", None),
+    ])
+    categories = table_rows(db_path, "categories")
+    transactions = table_rows(db_path, "transactions")
+    with pytest.raises(sqlite3.IntegrityError) as failure:
+        with TestClient(fresh_app(), raise_server_exceptions=False):
+            pass
+    message = str(failure.value)
+    assert f"지출 '{long_name}'" in message
+    assert "수입 '   '" in message
+    assert "식비" not in message
+    assert table_rows(db_path, "categories") == categories
+    assert table_rows(db_path, "transactions") == transactions
+    assert list(db_path.parent.glob("budget-before-v1.0*")) == []
+
+
+def test_api_mig_e03_restore_rejects_invalid_names(client, db_path, tmp_path):
+    t1 = create(client, T1)
+    backup = tmp_path / "legacy-backup.db"
+    make_legacy_db(backup, [("2026-10-30", "expense", 1000, "가" * 21, None)])
+    assert_error(restore_db(client, backup.read_bytes()), 422, "INVALID_BACKUP")
+    assert list_month(client, 2026, 10) == [t1]
+    assert safety_copies(db_path) == []

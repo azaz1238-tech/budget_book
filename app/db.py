@@ -4,7 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from app.categories import DEFAULT_CATEGORIES
+from app.categories import DEFAULT_CATEGORIES, TYPE_LABELS
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "budget.db"
 
@@ -86,6 +86,24 @@ def save_copy(conn, filename):
     return target.name
 
 
+class InvalidCategoryNameError(sqlite3.IntegrityError):
+    """이전 구조 DB의 분류 이름이 규칙에 맞지 않아 옮길 수 없다. 복원에서는 INVALID_BACKUP이 된다."""
+
+
+def check_legacy_category_names(conn):
+    """옮기다 CHECK 제약에 걸리기 전에 문제가 된 이름을 모두 찾아 알려 준다 (TRD 15.1절)."""
+    rows = conn.execute(
+        "SELECT DISTINCT type, category FROM transactions "
+        "WHERE length(trim(category)) NOT BETWEEN 1 AND 20 ORDER BY type, category"
+    ).fetchall()
+    if rows:
+        names = ", ".join(f"{TYPE_LABELS[row[0]]} '{row[1]}'" for row in rows)
+        raise InvalidCategoryNameError(
+            f"이전 구조 DB를 옮길 수 없습니다. 분류 이름은 1~20자여야 합니다: {names}. "
+            "DB는 바꾸지 않았습니다. 이 이름을 고친 뒤 다시 시도하세요."
+        )
+
+
 def migrate_transactions(conn):
     """v1.0: 거래의 분류를 이름에서 분류 ID로 옮긴다 (TRD 15.1절). 실패하면 모두 롤백된다."""
     sequence = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'transactions'").fetchone()
@@ -118,6 +136,8 @@ def init_db(path=None, keep_safety_copy=True):
     conn = connect(path)
     try:
         needs_migration = "category" in table_columns(conn, "transactions")
+        if needs_migration:
+            check_legacy_category_names(conn)
         if needs_migration and keep_safety_copy:
             save_copy(conn, "budget-before-v1.0.db")
         conn.executescript(SCHEMA)
