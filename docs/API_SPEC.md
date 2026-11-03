@@ -871,7 +871,7 @@ Content-Disposition: attachment; filename="budget-transactions-2026-11-02-1530.c
 | 지금 DB의 사본이나 교체 실패 | 500 | `DATABASE_ERROR` |
 
 - 어느 경우든 실패하면 지금 데이터는 바뀌지 않는다.
-- 이전 구조의 백업은 현재 구조로 옮긴 뒤 넣는다.
+- 이전 구조의 백업은 현재 구조로 옮긴 뒤 넣는다. 분류 이름이 규칙(1~20자)에 맞지 않아 옮길 수 없는 백업은 `INVALID_BACKUP`이다.
 
 ## 4. 구현 참고
 
